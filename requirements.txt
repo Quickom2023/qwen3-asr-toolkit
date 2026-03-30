@@ -1,0 +1,11 @@
+librosa
+pydub
+silero_vad
+soundfile
+tqdm
+setuptools
+wheel
+requests
+srt
+onnxruntime
+qwen3-asr
