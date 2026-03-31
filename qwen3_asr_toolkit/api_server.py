@@ -88,6 +88,7 @@ class TranscribeRequest(BaseModel):
     max_segment_seconds: int = 180
     tmp_dir: str = DEFAULT_TMP_DIR
     save_srt: bool = False
+    include_srt: bool = True
 
 
 def _validate_input_file(input_file: str) -> None:
@@ -133,10 +134,9 @@ def _serialize_segments(
     return serialized
 
 
-def _save_srt_file(
+def _compose_srt_content(
     wav_list: List[Tuple[int, int, object]],
     results: List[Tuple[int, str]],
-    save_file: str,
 ) -> str:
     ordered_results = dict(results)
     subtitles = []
@@ -149,10 +149,13 @@ def _save_srt_file(
                 content=ordered_results.get(idx, ""),
             )
         )
+    return srt.compose(subtitles)
 
+
+def _save_srt_file(save_file: str, srt_content: str) -> str:
     srt_path = os.path.splitext(save_file)[0] + ".srt"
     with open(srt_path, "w", encoding="utf-8") as handle:
-        handle.write(srt.compose(subtitles))
+        handle.write(srt_content)
     return srt_path
 
 
@@ -170,6 +173,7 @@ def _transcribe(
     max_segment_seconds: int,
     tmp_dir: str,
     save_srt: bool,
+    include_srt: bool,
 ) -> Dict[str, object]:
     _validate_input_file(input_file)
     os.makedirs(tmp_dir, exist_ok=True)
@@ -245,14 +249,17 @@ def _transcribe(
         handle.write(language + "\n")
         handle.write(full_text + "\n")
 
+    srt_content = None
+    if include_srt or save_srt:
+        srt_content = _compose_srt_content(wav_list, results)
+
     srt_path = None
     if save_srt:
-        srt_path = _save_srt_file(wav_list, results, save_file)
+        srt_path = _save_srt_file(save_file, srt_content or "")
 
-    return {
+    response = {
         # "input_file": input_file,
         # "detected_language": language,
-        "full_text": full_text,
         "duration_seconds": round(wav_duration_seconds, 3),
         "segment_count": len(wav_list),
         # "segments": _serialize_segments(wav_list, results),
@@ -260,6 +267,11 @@ def _transcribe(
         # "text_file": os.path.abspath(save_file),
         # "srt_file": os.path.abspath(srt_path) if srt_path else None,
     }
+    if include_srt:
+        response["srt_content"] = srt_content
+    else:
+        response["full_text"] = full_text
+    return response
 
 
 def _raise_as_http_error(exc: Exception) -> None:
@@ -296,6 +308,7 @@ def transcribe(
             max_segment_seconds=request.max_segment_seconds,
             tmp_dir=request.tmp_dir,
             save_srt=request.save_srt,
+            include_srt=request.include_srt,
         )
     except Exception as exc:
         _raise_as_http_error(exc)
@@ -311,11 +324,12 @@ def transcribe_upload(
     temperature: float = Form(0.2),
     skip_failed: bool = Form(False),
     max_retries: int = Form(10),
-    num_threads: int = Form(4),
-    vad_segment_threshold: int = Form(120),
-    max_segment_seconds: int = Form(180),
+    num_threads: int = Form(8),
+    vad_segment_threshold: int = Form(60),
+    max_segment_seconds: int = Form(120),
     tmp_dir: str = Form(DEFAULT_TMP_DIR),
     save_srt: bool = Form(False),
+    include_srt: bool = Form(True),
 ) -> Dict[str, object]:
     _verify_api_key(x_api_key)
     os.makedirs(tmp_dir, exist_ok=True)
@@ -344,6 +358,7 @@ def transcribe_upload(
             max_segment_seconds=max_segment_seconds,
             tmp_dir=tmp_dir,
             save_srt=save_srt,
+            include_srt=include_srt,
         )
         result["uploaded_filename"] = original_name
         return result
