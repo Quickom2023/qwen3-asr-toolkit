@@ -17,7 +17,8 @@ setup(
         'onnxruntime',
         'fastapi',
         'uvicorn',
-        'python-multipart'
+        'python-multipart',
+        'python-dotenv'
     ],
     entry_points={
         'console_scripts': [

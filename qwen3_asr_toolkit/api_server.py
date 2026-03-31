@@ -10,9 +10,14 @@ from urllib.parse import urlparse
 import requests
 import srt
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from pydantic import BaseModel
 from silero_vad import load_silero_vad
+try:
+    from dotenv import find_dotenv, load_dotenv  # type: ignore
+except Exception:
+    find_dotenv = None
+    load_dotenv = None
 
 from qwen3_asr_toolkit.audio_tools import (
     WAV_SAMPLE_RATE,
@@ -26,6 +31,14 @@ from qwen3_asr_toolkit.qwen3asr import QwenASR
 DEFAULT_CONTEXT = "Transcribe with punctuation. Preserve sentence meaning across pauses."
 DEFAULT_TMP_DIR = os.path.join(os.path.expanduser("~"), "qwen3-asr-cache")
 
+if load_dotenv and find_dotenv:
+    load_dotenv(find_dotenv(usecwd=True), override=False)
+
+
+def _is_true_env(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _get_default_api_url() -> str:
     return os.getenv(
         "QWEN3_ASR_API_URL",
@@ -34,6 +47,32 @@ def _get_default_api_url() -> str:
 
 
 app = FastAPI(title="Qwen3-ASR Toolkit API", version="1.0.0")
+
+
+def _verify_api_key(x_api_key: Optional[str]) -> None:
+    expected_api_key = os.getenv("QWEN3_ASR_API_KEY")
+    if not expected_api_key:
+        return
+    if x_api_key != expected_api_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-Api-Key header")
+
+
+def _try_cleanup_cache_root(tmp_dir: str) -> None:
+    upload_root = os.path.join(tmp_dir, "uploads")
+    try:
+        if os.path.isdir(upload_root) and not os.listdir(upload_root):
+            os.rmdir(upload_root)
+    except OSError:
+        pass
+
+    if not _is_true_env("QWEN3_ASR_AUTO_CLEAN_CACHE"):
+        return
+
+    try:
+        if os.path.isdir(tmp_dir) and not os.listdir(tmp_dir):
+            os.rmdir(tmp_dir)
+    except OSError:
+        pass
 
 
 class TranscribeRequest(BaseModel):
@@ -195,6 +234,7 @@ def _transcribe(
                     languages.append("Unknown")
     finally:
         shutil.rmtree(save_dir, ignore_errors=True)
+        _try_cleanup_cache_root(tmp_dir)
 
     results.sort(key=lambda item: item[0])
     full_text = " ".join(text for _, text in results).strip()
@@ -236,7 +276,11 @@ def health() -> Dict[str, str]:
 
 
 @app.post("/transcribe-cmd")
-def transcribe(request: TranscribeRequest) -> Dict[str, object]:
+def transcribe(
+    request: TranscribeRequest,
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+) -> Dict[str, object]:
+    _verify_api_key(x_api_key)
     try:
         return _transcribe(
             input_file=request.input_file,
@@ -260,6 +304,7 @@ def transcribe(request: TranscribeRequest) -> Dict[str, object]:
 @app.post("/transcribe")
 def transcribe_upload(
     file: UploadFile = File(...),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
     context: str = Form(DEFAULT_CONTEXT),
     model: Optional[str] = Form(None),
     api_timeout: int = Form(300),
@@ -272,6 +317,7 @@ def transcribe_upload(
     tmp_dir: str = Form(DEFAULT_TMP_DIR),
     save_srt: bool = Form(False),
 ) -> Dict[str, object]:
+    _verify_api_key(x_api_key)
     os.makedirs(tmp_dir, exist_ok=True)
     upload_root = os.path.join(tmp_dir, "uploads")
     os.makedirs(upload_root, exist_ok=True)
@@ -305,6 +351,8 @@ def transcribe_upload(
         _raise_as_http_error(exc)
     finally:
         file.file.close()
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        _try_cleanup_cache_root(tmp_dir)
 
 
 def run() -> None:
