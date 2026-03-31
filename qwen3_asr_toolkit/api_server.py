@@ -211,7 +211,7 @@ def _transcribe(
 
     return {
         # "input_file": input_file,
-        "detected_language": language,
+        # "detected_language": language,
         "full_text": full_text,
         "duration_seconds": round(wav_duration_seconds, 3),
         "segment_count": len(wav_list),

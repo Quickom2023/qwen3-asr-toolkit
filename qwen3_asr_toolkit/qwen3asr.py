@@ -26,7 +26,8 @@ language_code_mapping = {
     "ko": "Korean",
     "pt": "Portuguese",
     "ru": "Russian",
-    "es": "Spanish"
+    "es": "Spanish",
+    "vi": "Vietnamese",
 }
 
 
@@ -204,6 +205,13 @@ class QwenASR:
         cleaned = re.sub(r"\s+", " ", cleaned)
         return cleaned.strip()
 
+    def remove_chinese_characters(self, text: str) -> str:
+        if not text:
+            return text
+        cleaned = re.sub(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]+", "", text)
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        return cleaned.strip()
+
     def asr(self, wav_url: str, context: str = ""):
         local_file_path = None
         if not wav_url.startswith("http"):
@@ -259,7 +267,9 @@ class QwenASR:
                 response_json = response.json()
                 output = response_json["choices"][0]["message"]["content"]
                 language, recog_text = self._parse_asr_output(output)
-                return language, self.post_text_process(recog_text)
+                recog_text = self.post_text_process(recog_text)
+                recog_text = self.remove_chinese_characters(recog_text)
+                return language, recog_text
             except Exception as e:
                 try:
                     status_code = getattr(response, "status_code", "unknown")
@@ -303,7 +313,9 @@ class QwenASR:
                 response.raise_for_status()
                 response_json = response.json()
                 language, recog_text = self._parse_audio_transcription_response(response_json)
-                return language, self.post_text_process(recog_text)
+                recog_text = self.post_text_process(recog_text)
+                recog_text = self.remove_chinese_characters(recog_text)
+                return language, recog_text
             except Exception as e:
                 try:
                     status_code = getattr(response, "status_code", "unknown")
