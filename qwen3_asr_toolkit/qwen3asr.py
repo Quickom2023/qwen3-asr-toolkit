@@ -174,6 +174,7 @@ class QwenASR:
     def _parse_audio_transcription_response(self, response_json):
         if isinstance(response_json, dict):
             text = response_json.get("text", "")
+            print(f"RAW TEXT: {text}")
             language = response_json.get("language")
 
             # Some servers return metadata inline in `text`, e.g.
@@ -189,7 +190,7 @@ class QwenASR:
                 pass
 
             text = self._strip_inline_language_markers(text)
-
+            print(f"AFTER PROCESS: {text}")
             if language:
                 lang_code = str(language).strip().lower()
                 mapped_language = language_code_mapping.get(lang_code, str(language))

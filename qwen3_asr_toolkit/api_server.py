@@ -329,7 +329,7 @@ def transcribe_upload(
     num_threads: int = Form(8),
     vad_segment_threshold: int = Form(60),
     max_segment_seconds: int = Form(120),
-    vad_trigger_seconds: int = Form(160),
+    vad_trigger_seconds: int = Form(70),
     tmp_dir: str = Form(DEFAULT_TMP_DIR),
     save_srt: bool = Form(False),
     include_srt: bool = Form(True),
