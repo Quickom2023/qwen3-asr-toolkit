@@ -201,7 +201,11 @@ class QwenASR:
     def _strip_inline_language_markers(self, text: str) -> str:
         if not text:
             return text
-        cleaned = re.sub(r"(?is)language\s+[^\s<:=>]+\s*<asr_text>\s*", " ", text)
+        cleaned = re.sub(
+            r"(?is)\s*language\s+[^\s<:=>]+(?:\s+[^\s<:=>]+)*\s*<asr_text>\s*",
+            " ",
+            text,
+        )
         cleaned = re.sub(r"\s+", " ", cleaned)
         return cleaned.strip()
 

@@ -86,6 +86,7 @@ class TranscribeRequest(BaseModel):
     num_threads: int = 4
     vad_segment_threshold: int = 120
     max_segment_seconds: int = 180
+    vad_trigger_seconds: int = 180
     tmp_dir: str = DEFAULT_TMP_DIR
     save_srt: bool = False
     include_srt: bool = True
@@ -139,17 +140,16 @@ def _compose_srt_content(
     results: List[Tuple[int, str]],
 ) -> str:
     ordered_results = dict(results)
-    subtitles = []
+    blocks = []
     for idx, (start_sample, end_sample, _) in enumerate(wav_list):
-        subtitles.append(
-            srt.Subtitle(
-                index=idx,
-                start=timedelta(seconds=start_sample / WAV_SAMPLE_RATE),
-                end=timedelta(seconds=end_sample / WAV_SAMPLE_RATE),
-                content=ordered_results.get(idx, ""),
-            )
+        start_time = timedelta(seconds=start_sample / WAV_SAMPLE_RATE)
+        end_time = timedelta(seconds=end_sample / WAV_SAMPLE_RATE)
+        content = ordered_results.get(idx, "")
+        blocks.append(
+            f"{srt.timedelta_to_srt_timestamp(start_time)} --> "
+            f"{srt.timedelta_to_srt_timestamp(end_time)}\n{content}"
         )
-    return srt.compose(subtitles)
+    return "\n\n".join(blocks) + ("\n" if blocks else "")
 
 
 def _save_srt_file(save_file: str, srt_content: str) -> str:
@@ -171,6 +171,7 @@ def _transcribe(
     num_threads: int,
     vad_segment_threshold: int,
     max_segment_seconds: int,
+    vad_trigger_seconds: int,
     tmp_dir: str,
     save_srt: bool,
     include_srt: bool,
@@ -189,7 +190,7 @@ def _transcribe(
     wav = load_audio(input_file)
     wav_duration_seconds = len(wav) / WAV_SAMPLE_RATE
 
-    if wav_duration_seconds >= 180:
+    if wav_duration_seconds >= vad_trigger_seconds:
         worker_vad_model = load_silero_vad(onnx=True)
         wav_list = process_vad(
             wav,
@@ -306,6 +307,7 @@ def transcribe(
             num_threads=request.num_threads,
             vad_segment_threshold=request.vad_segment_threshold,
             max_segment_seconds=request.max_segment_seconds,
+            vad_trigger_seconds=request.vad_trigger_seconds,
             tmp_dir=request.tmp_dir,
             save_srt=request.save_srt,
             include_srt=request.include_srt,
@@ -316,7 +318,7 @@ def transcribe(
 
 @app.post("/transcribe")
 def transcribe_upload(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
     context: str = Form(DEFAULT_CONTEXT),
     model: Optional[str] = Form(None),
@@ -327,11 +329,14 @@ def transcribe_upload(
     num_threads: int = Form(8),
     vad_segment_threshold: int = Form(60),
     max_segment_seconds: int = Form(120),
+    vad_trigger_seconds: int = Form(160),
     tmp_dir: str = Form(DEFAULT_TMP_DIR),
     save_srt: bool = Form(False),
     include_srt: bool = Form(True),
 ) -> Dict[str, object]:
     _verify_api_key(x_api_key)
+    if file is None or not file.filename:
+        raise HTTPException(status_code=400, detail="Missing file in request body field 'file'.")
     os.makedirs(tmp_dir, exist_ok=True)
     upload_root = os.path.join(tmp_dir, "uploads")
     os.makedirs(upload_root, exist_ok=True)
@@ -356,6 +361,7 @@ def transcribe_upload(
             num_threads=num_threads,
             vad_segment_threshold=vad_segment_threshold,
             max_segment_seconds=max_segment_seconds,
+            vad_trigger_seconds=vad_trigger_seconds,
             tmp_dir=tmp_dir,
             save_srt=save_srt,
             include_srt=include_srt,
