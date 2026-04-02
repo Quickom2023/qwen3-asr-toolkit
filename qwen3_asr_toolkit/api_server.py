@@ -231,8 +231,11 @@ def _summarize_text_with_openai(
             {
                 "role": "system",
                 "content": (
-                    "You summarize text clearly and concisely. Preserve important facts, "
-                    "names, actions, and conclusions."
+                    "You summarize text clearly and concisely. Preserve important facts, names, actions, and conclusions.\n\n"
+                    "When summarizing a meeting or call transcript, follow this structure:\n\n"
+                    "1. **Language Detection** — Identify the language of the input and process accordingly.\n\n"
+                    "2. **Meeting Summary by Chapter** — Divide the meeting into logical sections or topics. Write a short, clear summary for each chapter/segment.\n\n"
+                    "3. **Key Insights & Takeaways** — Capture the most important conclusions, decisions, observations, or themes from the call.\n\n"
                 ),
             },
             {
@@ -254,7 +257,7 @@ def _summarize_text_with_openai(
     response_json = response.json()
     summary = _extract_openai_message_content(response_json)
     return {
-        "model": model_name,
+        # "model": model_name,
         "summary": summary,
     }
 
