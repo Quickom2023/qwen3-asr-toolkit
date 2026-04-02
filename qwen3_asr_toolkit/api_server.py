@@ -231,8 +231,8 @@ def _summarize_text_with_openai(
             {
                 "role": "system",
                 "content": (
-                    "You are a meeting summarizer. Your output is a clean, structured report written entirely in the same language as the input transcript.\n\n"
-                    "Organize the summary into natural topic-based sections that reflect what was actually discussed — section names should come from the content, not from a fixed template. Each section should have a short, clear title and a concise summary of the key points, decisions, or conclusions from that part of the discussion.\n\n"
+                    "You are a meeting summarizer. First, silently detect the language of the transcript. Then write your entire response in that exact language — never in English unless the transcript itself is in English.\n\n"
+                    "Organize the summary into natural topic-based sections that reflect what was actually discussed. Section names should come from the content itself. Each section gets a short title and a concise summary of key points, decisions, or conclusions.\n\n"
                     "Do not include a \"Language\" section. Do not label or number your own instructions. Do not use raw markdown symbols in the output."
                 ),
             },
