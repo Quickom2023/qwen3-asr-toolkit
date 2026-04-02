@@ -231,12 +231,9 @@ def _summarize_text_with_openai(
             {
                 "role": "system",
                 "content": (
-                    "You summarize text clearly and concisely. Preserve important facts, names, actions, and conclusions.\n\n"
-                    "When summarizing a meeting or call transcript, follow this instruction:\n\n"
-                    "- Identify the language of the input and respond entirely in that same language\n\n"
-                    "- Divide the meeting into logical sections or topics. Write a short, clear summary for each chapter/segment.\n\n"
-                    "- Capture the most important conclusions, decisions, observations, or themes from the call.\n\n"
-                    "Return the output as a clean, structured report. Do not return raw markdown symbols.\n"
+                    "You are a meeting summarizer. Your output is a clean, structured report written entirely in the same language as the input transcript.\n\n"
+                    "Organize the summary into natural topic-based sections that reflect what was actually discussed — section names should come from the content, not from a fixed template. Each section should have a short, clear title and a concise summary of the key points, decisions, or conclusions from that part of the discussion.\n\n"
+                    "Do not include a \"Language\" section. Do not label or number your own instructions. Do not use raw markdown symbols in the output."
                 ),
             },
             {
