@@ -4,7 +4,7 @@
 
 - `pip install vllm`
 
-- `vllm serve Qwen/Qwen3-ASR-1.7B --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.4 --max-model-len 4096 --max-num-seqs 16 --max-num-batched-tokens 1024 --no-enforce-eager`
+- `vllm serve Qwen/Qwen3-ASR-1.7B --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.4 --max-model-len 4096 --max-num-seqs 24 --max-num-batched-tokens 2048 --no-enforce-eager`
 
 - `pip install -e .`
 

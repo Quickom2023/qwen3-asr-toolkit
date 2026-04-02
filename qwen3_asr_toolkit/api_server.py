@@ -46,6 +46,14 @@ def _get_default_api_url() -> str:
     )
 
 
+def _get_openai_base_url() -> str:
+    return os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+
+
+def _get_default_summary_model() -> str:
+    return os.getenv("OPENAI_SUMMARY_MODEL", "gpt-4.1-mini")
+
+
 app = FastAPI(title="Qwen3-ASR Toolkit API", version="1.0.0")
 
 
@@ -90,6 +98,14 @@ class TranscribeRequest(BaseModel):
     tmp_dir: str = DEFAULT_TMP_DIR
     save_srt: bool = False
     include_srt: bool = True
+    include_text: bool = False
+
+
+class SummarizeTextRequest(BaseModel):
+    text: str
+    model: Optional[str] = None
+    temperature: float = 0.2
+    max_tokens: int = 1000   
 
 
 def _validate_input_file(input_file: str) -> None:
@@ -159,6 +175,90 @@ def _save_srt_file(save_file: str, srt_content: str) -> str:
     return srt_path
 
 
+def _extract_openai_message_content(response_json: Dict[str, object]) -> str:
+    choices = response_json.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("OpenAI response missing choices")
+
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        raise ValueError("OpenAI response has invalid choice format")
+
+    message = first_choice.get("message")
+    if not isinstance(message, dict):
+        raise ValueError("OpenAI response missing message")
+
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content.strip()
+
+    if isinstance(content, list):
+        text_parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text_value = item.get("text", "")
+                if isinstance(text_value, str):
+                    text_parts.append(text_value)
+        return "\n".join(part for part in text_parts if part).strip()
+
+    return str(content).strip()
+
+
+def _summarize_text_with_openai(
+    text: str,
+    model: Optional[str],
+    temperature: float,
+    max_tokens: int,
+) -> Dict[str, object]:
+    if not text or not text.strip():
+        raise ValueError("Field 'text' must not be empty.")
+
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
+        raise ValueError("OPENAI_API_KEY is not configured.")
+
+    model_name = model or _get_default_summary_model()
+    endpoint = _get_openai_base_url() + "/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {openai_api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model_name,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You summarize text clearly and concisely. Preserve important facts, "
+                    "names, actions, and conclusions."
+                ),
+            },
+            {
+                "role": "user",
+                "content": text,
+            },
+        ],
+    }
+
+    try:
+        response = requests.post(endpoint, headers=headers, json=payload, timeout=120)
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        detail = exc.response.text if exc.response is not None else str(exc)
+        raise ValueError(f"OpenAI API request failed: {detail}") from exc
+    except requests.RequestException as exc:
+        raise ValueError(f"OpenAI API request failed: {exc}") from exc
+
+    response_json = response.json()
+    summary = _extract_openai_message_content(response_json)
+    return {
+        "model": model_name,
+        "summary": summary,
+    }
+
+
 def _transcribe(
     input_file: str,
     context: str,
@@ -175,6 +275,7 @@ def _transcribe(
     tmp_dir: str,
     save_srt: bool,
     include_srt: bool,
+    include_text: bool,
 ) -> Dict[str, object]:
     _validate_input_file(input_file)
     os.makedirs(tmp_dir, exist_ok=True)
@@ -270,7 +371,7 @@ def _transcribe(
     }
     if include_srt:
         response["srt_content"] = srt_content
-    else:
+    if include_text:
         response["full_text"] = full_text
     return response
 
@@ -286,6 +387,23 @@ def _raise_as_http_error(exc: Exception) -> None:
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/summarize")
+def summarize_text(
+    request: SummarizeTextRequest,
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+) -> Dict[str, object]:
+    _verify_api_key(x_api_key)
+    try:
+        return _summarize_text_with_openai(
+            text=request.text,
+            model=request.model,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+        )
+    except Exception as exc:
+        _raise_as_http_error(exc)
 
 
 @app.post("/transcribe-cmd")
@@ -311,6 +429,7 @@ def transcribe(
             tmp_dir=request.tmp_dir,
             save_srt=request.save_srt,
             include_srt=request.include_srt,
+            include_text=request.include_text,
         )
     except Exception as exc:
         _raise_as_http_error(exc)
@@ -333,6 +452,7 @@ def transcribe_upload(
     tmp_dir: str = Form(DEFAULT_TMP_DIR),
     save_srt: bool = Form(False),
     include_srt: bool = Form(True),
+    include_text: bool = Form(False),
 ) -> Dict[str, object]:
     _verify_api_key(x_api_key)
     if file is None or not file.filename:
@@ -365,6 +485,7 @@ def transcribe_upload(
             tmp_dir=tmp_dir,
             save_srt=save_srt,
             include_srt=include_srt,
+            include_text=include_text,
         )
         result["uploaded_filename"] = original_name
         return result
