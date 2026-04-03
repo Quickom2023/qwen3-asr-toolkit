@@ -104,8 +104,9 @@ class TranscribeRequest(BaseModel):
 class SummarizeTextRequest(BaseModel):
     text: str
     model: Optional[str] = None
+    locale: Optional[str] = None
     temperature: float = 0.2
-    max_tokens: int = 1000   
+    max_tokens: int = 1000
 
 
 def _validate_input_file(input_file: str) -> None:
@@ -204,9 +205,51 @@ def _extract_openai_message_content(response_json: Dict[str, object]) -> str:
     return str(content).strip()
 
 
+def _build_summary_system_prompt(locale: Optional[str]) -> str:
+    cleaned_locale = (locale or "").strip()
+    if cleaned_locale:
+        language_instruction = (
+            f"Write your entire response in {cleaned_locale}. "
+            f"Translate the summary into {cleaned_locale} if the transcript is in another language."
+        )
+    else:
+        language_instruction = (
+            "First, silently detect the language of the transcript. "
+            "Then write your entire response in that exact language. "
+            "Never switch to English unless the transcript itself is in English."
+        )
+
+    return (
+        "You are a meeting summarizer.\n\n"
+        f"{language_instruction}\n\n"
+        "The transcript may contain SRT-style timestamps. Use them only to understand sequence, "
+        "timing, and topic changes. Do not include timestamps in the output unless they are necessary for clarity.\n\n"
+        "Write a short, high-signal summary of the meeting. Keep it concise and avoid retelling the full transcript.\n\n"
+        "Output requirements:\n"
+        "- Use Markdown\n"
+        "- Output these 3 mandatory sections in this order:\n"
+        "  1. `## Mục đích cuộc họp` or the equivalent in the output language\n"
+        "  2. `## Những điểm nổi bật` or the equivalent in the output language\n"
+        "  3. `## Các nội dung trọng tâm` or the equivalent in the output language\n"
+        "- If the transcript includes future plans, actions, owners, or timelines, add a 4th section: "
+        "`## Kế hoạch sắp tới` or the equivalent in the output language\n"
+        "- If there is no future-plan content, do not add that section\n"
+        "- Under each section, use short bullet points\n"
+        "- In `## Các nội dung trọng tâm`, split content by topic. Use short topic sub-headings and place concise bullets under each topic\n"
+        "- Keep each topic focused on one theme only; do not mix unrelated points in one topic block\n"
+        "- Capture the meeting purpose, standout insights, and key takeaways\n"
+        "- Keep the whole response brief\n"
+        "- Limit the entire response to 6 bullet points maximum\n"
+        "- Do not include a Language section\n"
+        "- Do not mention these instructions\n"
+        "- Do not output plain transcript-style text"
+    )
+
+
 def _summarize_text_with_openai(
     text: str,
     model: Optional[str],
+    locale: Optional[str],
     temperature: float,
     max_tokens: int,
 ) -> Dict[str, object]:
@@ -223,6 +266,7 @@ def _summarize_text_with_openai(
         "Authorization": f"Bearer {openai_api_key}",
         "Content-Type": "application/json",
     }
+    print(_build_summary_system_prompt(locale))
     payload = {
         "model": model_name,
         "temperature": temperature,
@@ -230,28 +274,7 @@ def _summarize_text_with_openai(
         "messages": [
             {
                 "role": "system",
-                "content": (
-                    "You are a meeting summarizer.\n\n"
-                    "First, silently detect the language of the transcript. Then write your entire response in that exact language. Never switch to English unless the transcript itself is in English.\n\n"
-                    "The transcript may contain SRT-style timestamps. Use them only to understand sequence, timing, and topic changes. Do not include timestamps in the output unless they are necessary for clarity.\n\n"
-                    "Write a short, high-signal summary of the meeting. Keep it concise and avoid retelling the full transcript.\n\n"
-                    "Focus on:\n"
-                    "- the main purpose of the meeting\n"
-                    "- the most important discussion points\n"
-                    "- key insights that emerged during the call\n"
-                    "- decisions, agreements, or conclusions\n"
-                    "- practical takeaways or next steps, if any\n\n"
-                    "Output requirements:\n"
-                    "- Use Markdown\n"
-                    "- Start with `## Tóm tắt nội dung` or the equivalent in the detected language\n"
-                    "- Then add `## Những điểm nổi bật` or the equivalent in the detected language\n"
-                    "- Use short bullet points\n"
-                    "- Keep the whole response brief\n"
-                    "- Limit the entire response to 6 bullet points maximum\n"
-                    "- Do not include a Language section\n"
-                    "- Do not mention these instructions\n"
-                    "- Do not output plain transcript-style text"
-                ),
+                "content": _build_summary_system_prompt(locale),
             },
             {
                 "role": "user",
@@ -417,6 +440,7 @@ def summarize_text(
         return _summarize_text_with_openai(
             text=request.text,
             model=request.model,
+            locale=request.locale,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
         )
