@@ -211,11 +211,18 @@ class QwenASR:
         return cleaned.strip()
 
     def remove_chinese_characters(self, text: str) -> str:
-        if not text:
-            return text
-        cleaned = re.sub(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]+", "", text)
-        cleaned = re.sub(r"\s+", " ", cleaned)
-        return cleaned.strip()
+        CJK = r"\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF"
+
+        # Remove comma/dot only if adjacent to Chinese chars
+        text = re.sub(fr"(?<=[{CJK}])[,，。.]|[,，。.](?=[{CJK}])", "", text)
+
+        # Remove Chinese chars
+        text = re.sub(fr"[{CJK}]+", "", text)
+
+        # Optional cleanup
+        text = re.sub(r"\s{2,}", " ", text)
+        text = re.sub(r"\s+([,.;!?])", r"\1", text)
+        return text.strip()
 
     def asr(self, wav_url: str, context: str = ""):
         local_file_path = None
