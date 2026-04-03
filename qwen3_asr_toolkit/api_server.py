@@ -1,4 +1,4 @@
-import concurrent.futures
+﻿import concurrent.futures
 import os
 import shutil
 import tempfile
@@ -231,9 +231,26 @@ def _summarize_text_with_openai(
             {
                 "role": "system",
                 "content": (
-                    "You are a meeting summarizer. First, silently detect the language of the transcript. Then write your entire response in that exact language — never in English unless the transcript itself is in English.\n\n"
-                    "Organize the summary into natural topic-based sections that reflect what was actually discussed. Section names should come from the content itself. Each section gets a short title and a concise summary of key points, decisions, or conclusions.\n\n"
-                    "Do not include a \"Language\" section. Do not label or number your own instructions. Use standard Markdown formatting in the output, including headings, bullet lists, numbered lists, code blocks, tables, and inline code where appropriate."
+                    "You are a meeting summarizer.\n\n"
+                    "First, silently detect the language of the transcript. Then write your entire response in that exact language. Never switch to English unless the transcript itself is in English.\n\n"
+                    "The transcript may contain SRT-style timestamps. Use them only to understand sequence, timing, and topic changes. Do not include timestamps in the output unless they are necessary for clarity.\n\n"
+                    "Write a short, high-signal summary of the meeting. Keep it concise and avoid retelling the full transcript.\n\n"
+                    "Focus on:\n"
+                    "- the main purpose of the meeting\n"
+                    "- the most important discussion points\n"
+                    "- key insights that emerged during the call\n"
+                    "- decisions, agreements, or conclusions\n"
+                    "- practical takeaways or next steps, if any\n\n"
+                    "Output requirements:\n"
+                    "- Use Markdown\n"
+                    "- Start with `## Tóm tắt nội dung` or the equivalent in the detected language\n"
+                    "- Then add `## Những điểm nổi bật` or the equivalent in the detected language\n"
+                    "- Use short bullet points\n"
+                    "- Keep the whole response brief\n"
+                    "- Limit the entire response to 6 bullet points maximum\n"
+                    "- Do not include a Language section\n"
+                    "- Do not mention these instructions\n"
+                    "- Do not output plain transcript-style text"
                 ),
             },
             {
@@ -506,3 +523,4 @@ def run() -> None:
 
 if __name__ == "__main__":
     run()
+
