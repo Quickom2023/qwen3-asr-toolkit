@@ -181,9 +181,10 @@ def _uppercase_first_word(text: str) -> str:
         return text
 
     chars = list(text)
+    sentence_end_chars = {".", "?", "!"}
     capitalize_next = True
     for idx, char in enumerate(chars):
-        if char == ".":
+        if char in sentence_end_chars:
             capitalize_next = True
             continue
 
