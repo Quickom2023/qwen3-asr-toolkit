@@ -284,7 +284,7 @@ def _summarize_text_with_openai(
         "Authorization": f"Bearer {openai_api_key}",
         "Content-Type": "application/json",
     }
-    print(_build_summary_system_prompt(locale))
+    # print(_build_summary_system_prompt(locale))
     payload = {
         "model": model_name,
         "temperature": temperature,
