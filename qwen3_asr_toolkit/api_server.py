@@ -181,11 +181,17 @@ def _uppercase_first_word(text: str) -> str:
         return text
 
     chars = list(text)
+    capitalize_next = True
     for idx, char in enumerate(chars):
-        if char.isalpha():
+        if char == ".":
+            capitalize_next = True
+            continue
+
+        if capitalize_next and char.isalpha():
             chars[idx] = char.upper()
-            return "".join(chars)
-    return text
+            capitalize_next = False
+
+    return "".join(chars)
 
 
 def _extract_openai_message_content(response_json: Dict[str, object]) -> str:
