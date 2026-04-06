@@ -176,6 +176,18 @@ def _save_srt_file(save_file: str, srt_content: str) -> str:
     return srt_path
 
 
+def _uppercase_first_word(text: str) -> str:
+    if not text:
+        return text
+
+    chars = list(text)
+    for idx, char in enumerate(chars):
+        if char.isalpha():
+            chars[idx] = char.upper()
+            return "".join(chars)
+    return text
+
+
 def _extract_openai_message_content(response_json: Dict[str, object]) -> str:
     choices = response_json.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -369,7 +381,7 @@ def _transcribe(
                 idx = future_dict[future]
                 try:
                     language, recog_text = future.result()
-                    results.append((idx, recog_text))
+                    results.append((idx, _uppercase_first_word(recog_text)))
                     languages.append(language)
                 except Exception as exc:
                     if not skip_failed:
