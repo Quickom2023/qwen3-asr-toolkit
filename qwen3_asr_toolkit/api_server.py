@@ -641,7 +641,7 @@ async def summarize_minutes(
             raise ValueError("Failed to summarize all sections.")
 
         output_markdown = _build_minutes_markdown(ordered_sections)
-        return {"text": output_markdown}
+        return {"content": output_markdown}
     except Exception as exc:
         _raise_as_http_error(exc)
     finally:
