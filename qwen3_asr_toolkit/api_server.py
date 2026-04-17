@@ -175,9 +175,13 @@ def _strip_summary_title_line(summary_content: str) -> str:
 
 
 def _build_minutes_markdown(sections: List[Tuple[str, str]]) -> str:
-    lines = ["II. DIỄN BIẾN CUỘC HỌP"]
+    lines = ["# I. THÀNH PHẦN THAM DỰ"]
+    for title, _ in sections:
+        lines.append(f"- {title}.")
+    lines.append("")
+    lines.append("# II. DIỄN BIẾN CUỘC HỌP")
     for index, (title, content) in enumerate(sections, start=1):
-        lines.append(f"{index}. {title}")
+        lines.append(f"**{index}. {title}**")
         lines.append(content.strip())
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
@@ -592,11 +596,11 @@ def summarize_conclusion(
     try:
         return generate_conclusions_from_summaries(
             transcript=request.transcript,
-            model=request.model,
-            locale=request.locale,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-            include_prompt=request.include_prompt,
+            # model=request.model,
+            # locale=request.locale,
+            # temperature=request.temperature,
+            # max_tokens=request.max_tokens,
+            # include_prompt=request.include_prompt,
         )
     except Exception as exc:
         _raise_as_http_error(exc)
