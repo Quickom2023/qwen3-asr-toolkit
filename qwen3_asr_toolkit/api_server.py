@@ -609,8 +609,9 @@ async def summarize_minutes(
         if not sections:
             raise ValueError("Markdown file must contain at least one heading with transcript content below it.")
 
-        summarized_sections: List[Tuple[str, str, bool]] = []
-        for original_title, transcript in sections:
+        summarized_sections: List[Optional[Tuple[str, str, bool]]] = [None] * len(sections)
+
+        def _summarize_section(index: int, original_title: str, transcript: str) -> Tuple[int, str, str, bool]:
             is_minutes_conclusion = _is_minutes_conclusion_title(original_title)
             system_prompt = _get_prompt_for_minutes_title(original_title)
             result = generate_each_person_from_transcript(
@@ -624,11 +625,22 @@ async def summarize_minutes(
             )
             content = str(result["content"]).strip()
             display_title = _extract_summary_title(content, original_title)
-            summarized_sections.append(
-                (display_title, _strip_summary_title_line(content), is_minutes_conclusion)
-            )
+            return index, display_title, _strip_summary_title_line(content), is_minutes_conclusion
 
-        output_markdown = _build_minutes_markdown(summarized_sections)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [
+                executor.submit(_summarize_section, index, original_title, transcript)
+                for index, (original_title, transcript) in enumerate(sections)
+            ]
+            for future in concurrent.futures.as_completed(futures):
+                index, display_title, content, is_minutes_conclusion = future.result()
+                summarized_sections[index] = (display_title, content, is_minutes_conclusion)
+
+        ordered_sections = [item for item in summarized_sections if item is not None]
+        if len(ordered_sections) != len(sections):
+            raise ValueError("Failed to summarize all sections.")
+
+        output_markdown = _build_minutes_markdown(ordered_sections)
         return {"text": output_markdown}
     except Exception as exc:
         _raise_as_http_error(exc)
