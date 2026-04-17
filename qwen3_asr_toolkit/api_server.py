@@ -1,5 +1,6 @@
 ﻿import concurrent.futures
 import os
+import re
 import shutil
 import tempfile
 from collections import Counter
@@ -24,6 +25,10 @@ from qwen3_asr_toolkit.audio_tools import (
     load_audio,
     process_vad,
     save_audio_file,
+)
+from qwen3_asr_toolkit.content_generation import (
+    generate_each_person_from_transcript,
+    generate_conclusions_from_summaries,
 )
 from qwen3_asr_toolkit.qwen3asr import QwenASR
 
@@ -107,6 +112,75 @@ class SummarizeTextRequest(BaseModel):
     locale: Optional[str] = None
     temperature: float = 0.2
     max_tokens: int = 1000
+
+
+class GenerateEachPersonRequest(BaseModel):
+    transcript: str
+    model: Optional[str] = None
+    locale: Optional[str] = None
+    temperature: float = 0.2
+    max_tokens: int = 3000
+    include_prompt: bool = False
+
+
+class GenerateConclusionsRequest(BaseModel):
+    transcript: str
+    model: Optional[str] = None
+    locale: Optional[str] = None
+    temperature: float = 0.2
+    max_tokens: int = 10000
+    include_prompt: bool = False
+
+
+def _split_markdown_sections(markdown_text: str) -> List[Tuple[str, str]]:
+    sections: List[Tuple[str, str]] = []
+    current_title: Optional[str] = None
+    current_lines: List[str] = []
+
+    for raw_line in markdown_text.splitlines():
+        heading_match = re.match(r"^\s{0,3}(#{1,6})\s+(.*\S)\s*$", raw_line)
+        if heading_match:
+            if current_title is not None:
+                content = "\n".join(current_lines).strip()
+                if content:
+                    sections.append((current_title, content))
+            current_title = heading_match.group(2).strip()
+            current_lines = []
+            continue
+
+        if current_title is not None:
+            current_lines.append(raw_line)
+
+    if current_title is not None:
+        content = "\n".join(current_lines).strip()
+        if content:
+            sections.append((current_title, content))
+
+    return sections
+
+
+def _extract_summary_title(summary_content: str, fallback_title: str) -> str:
+    for line in summary_content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            return stripped[2:].strip() or fallback_title
+    return fallback_title
+
+
+def _strip_summary_title_line(summary_content: str) -> str:
+    lines = summary_content.splitlines()
+    if lines and lines[0].strip().startswith("# "):
+        return "\n".join(lines[1:]).strip()
+    return summary_content.strip()
+
+
+def _build_minutes_markdown(sections: List[Tuple[str, str]]) -> str:
+    lines = ["II. DIỄN BIẾN CUỘC HỌP"]
+    for index, (title, content) in enumerate(sections, start=1):
+        lines.append(f"{index}. {title}")
+        lines.append(content.strip())
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _validate_input_file(input_file: str) -> None:
@@ -467,33 +541,94 @@ def summarize_text(
         _raise_as_http_error(exc)
 
 
-@app.post("/transcribe-cmd")
-def transcribe(
-    request: TranscribeRequest,
+@app.post("/summarize/minutes")
+async def summarize_minutes(
+    file: Optional[UploadFile] = File(None),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+    # model: Optional[str] = Form(None),
+    # locale: Optional[str] = Form(None),
+    # temperature: float = Form(0.2),
+    # max_tokens: int = Form(2000),
+    # include_prompt: bool = Form(False),
+) -> Dict[str, object]:
+    _verify_api_key(x_api_key)
+    if file is None or not file.filename:
+        raise HTTPException(status_code=400, detail="Missing file in request body field 'file'.")
+
+    try:
+        markdown_text = (await file.read()).decode("utf-8-sig")
+        sections = _split_markdown_sections(markdown_text)
+        if not sections:
+            raise ValueError("Markdown file must contain at least one heading with transcript content below it.")
+
+        summarized_sections: List[Tuple[str, str]] = []
+        for original_title, transcript in sections:
+            result = generate_each_person_from_transcript(
+                transcript=f"{original_title}\n\n{transcript}",
+                # model=model,
+                # locale=locale,
+                # temperature=temperature,
+                # max_tokens=max_tokens,
+                # include_prompt=include_prompt,
+            )
+            content = str(result["content"]).strip()
+            display_title = _extract_summary_title(content, original_title)
+            summarized_sections.append((display_title, _strip_summary_title_line(content)))
+
+        output_markdown = _build_minutes_markdown(summarized_sections)
+        return {"text": output_markdown}
+    except Exception as exc:
+        _raise_as_http_error(exc)
+    finally:
+        file.file.close()
+
+
+@app.post("/summarize/conclusions")
+def summarize_conclusion(
+    request: GenerateConclusionsRequest,
     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
 ) -> Dict[str, object]:
     _verify_api_key(x_api_key)
     try:
-        return _transcribe(
-            input_file=request.input_file,
-            context=request.context,
-            api_url=_get_default_api_url(),
+        return generate_conclusions_from_summaries(
+            transcript=request.transcript,
             model=request.model,
-            api_timeout=request.api_timeout,
+            locale=request.locale,
             temperature=request.temperature,
-            skip_failed=request.skip_failed,
-            max_retries=request.max_retries,
-            num_threads=request.num_threads,
-            vad_segment_threshold=request.vad_segment_threshold,
-            max_segment_seconds=request.max_segment_seconds,
-            vad_trigger_seconds=request.vad_trigger_seconds,
-            tmp_dir=request.tmp_dir,
-            save_srt=request.save_srt,
-            include_srt=request.include_srt,
-            include_text=request.include_text,
+            max_tokens=request.max_tokens,
+            include_prompt=request.include_prompt,
         )
     except Exception as exc:
         _raise_as_http_error(exc)
+
+
+# @app.post("/transcribe-cmd")
+# def transcribe(
+#     request: TranscribeRequest,
+#     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+# ) -> Dict[str, object]:
+#     _verify_api_key(x_api_key)
+#     try:
+#         return _transcribe(
+#             input_file=request.input_file,
+#             context=request.context,
+#             api_url=_get_default_api_url(),
+#             model=request.model,
+#             api_timeout=request.api_timeout,
+#             temperature=request.temperature,
+#             skip_failed=request.skip_failed,
+#             max_retries=request.max_retries,
+#             num_threads=request.num_threads,
+#             vad_segment_threshold=request.vad_segment_threshold,
+#             max_segment_seconds=request.max_segment_seconds,
+#             vad_trigger_seconds=request.vad_trigger_seconds,
+#             tmp_dir=request.tmp_dir,
+#             save_srt=request.save_srt,
+#             include_srt=request.include_srt,
+#             include_text=request.include_text,
+#         )
+#     except Exception as exc:
+#         _raise_as_http_error(exc)
 
 
 @app.post("/transcribe")
