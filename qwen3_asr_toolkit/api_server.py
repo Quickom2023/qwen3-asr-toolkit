@@ -27,6 +27,8 @@ from qwen3_asr_toolkit.audio_tools import (
     save_audio_file,
 )
 from qwen3_asr_toolkit.content_generation import (
+    build_each_person_prompt,
+    build_minutes_conclusion_prompt,
     generate_each_person_from_transcript,
     generate_conclusions_from_summaries,
 )
@@ -127,7 +129,7 @@ class GenerateConclusionsRequest(BaseModel):
     transcript: str
     model: Optional[str] = None
     locale: Optional[str] = None
-    temperature: float = 0.2
+    temperature: float = 0.1
     max_tokens: int = 10000
     include_prompt: bool = False
 
@@ -174,15 +176,57 @@ def _strip_summary_title_line(summary_content: str) -> str:
     return summary_content.strip()
 
 
-def _build_minutes_markdown(sections: List[Tuple[str, str]]) -> str:
+def _has_title_keyword(title: str, keywords: Tuple[str, ...]) -> bool:
+    normalized_title = title.casefold()
+    return any(keyword in normalized_title for keyword in keywords)
+
+
+def _is_minutes_conclusion_title(title: str) -> bool:
+    return _has_title_keyword(title, ("kết luận", "ket luan"))
+
+
+# For meeting minutes, if the title contains keywords like "conclusion", use a prompt that focuses on extracting conclusions.
+def _get_prompt_for_minutes_title(title: str) -> str:
+    if _is_minutes_conclusion_title(title):
+        return build_minutes_conclusion_prompt()
+
+    if _has_title_keyword(
+        title,
+        ("chỉ đạo", "chi dao"),
+        # ("bí thư", "chủ tịch", "chỉ đạo", "bi thu", "chu tich", "chi dao"),
+    ):
+        return build_each_person_prompt(
+            max_bullet_points=10,
+            compression_percent=60,
+            transcript_sentence_range="2-3",
+        )
+    return build_each_person_prompt()
+
+
+def _renumber_minutes_conclusion_titles(content: str, section_index: int) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        leading_ws = match.group(1)
+        local_index = match.group(2)
+        title_text = match.group(3).strip()
+        return f"{leading_ws}**{section_index}.{local_index}. {title_text}**"
+
+    return re.sub(r"^(\s*)(?:\*\*)?(\d+)\.\s+(.*?)(?:\*\*)?$", _replace, content, flags=re.MULTILINE)
+
+
+def _build_minutes_markdown(sections: List[Tuple[str, str, bool]]) -> str:
     lines = ["# I. THÀNH PHẦN THAM DỰ"]
-    for title, _ in sections:
+    for title, _, _ in sections:
         lines.append(f"- {title}.")
     lines.append("")
     lines.append("# II. DIỄN BIẾN CUỘC HỌP")
-    for index, (title, content) in enumerate(sections, start=1):
+    for index, (title, content, is_minutes_conclusion) in enumerate(sections, start=1):
+        rendered_content = (
+            _renumber_minutes_conclusion_titles(content.strip(), index)
+            if is_minutes_conclusion
+            else content.strip()
+        )
         lines.append(f"**{index}. {title}**")
-        lines.append(content.strip())
+        lines.append(rendered_content)
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -565,10 +609,13 @@ async def summarize_minutes(
         if not sections:
             raise ValueError("Markdown file must contain at least one heading with transcript content below it.")
 
-        summarized_sections: List[Tuple[str, str]] = []
+        summarized_sections: List[Tuple[str, str, bool]] = []
         for original_title, transcript in sections:
+            is_minutes_conclusion = _is_minutes_conclusion_title(original_title)
+            system_prompt = _get_prompt_for_minutes_title(original_title)
             result = generate_each_person_from_transcript(
                 transcript=f"{original_title}\n\n{transcript}",
+                system_prompt=system_prompt,
                 # model=model,
                 # locale=locale,
                 # temperature=temperature,
@@ -577,7 +624,9 @@ async def summarize_minutes(
             )
             content = str(result["content"]).strip()
             display_title = _extract_summary_title(content, original_title)
-            summarized_sections.append((display_title, _strip_summary_title_line(content)))
+            summarized_sections.append(
+                (display_title, _strip_summary_title_line(content), is_minutes_conclusion)
+            )
 
         output_markdown = _build_minutes_markdown(summarized_sections)
         return {"text": output_markdown}

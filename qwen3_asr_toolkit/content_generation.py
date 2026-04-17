@@ -6,7 +6,36 @@ import requests
 
 
 DEFAULT_CHAT_MODEL = "gpt-4.1-mini"
-DEFAULT_TIMEOUT_SECONDS = 120
+DEFAULT_TIMEOUT_SECONDS = 300
+MINUTES_CONCLUSION_PROMPT = """
+Bạn là trợ lý tóm tắt văn bản chuyên nghiệp. Nhiệm vụ của bạn là tóm tắt nội dung một cách rõ ràng, đầy đủ và có cấu trúc mạch lạc.
+
+Khi tóm tắt, tuân thủ nghiêm các quy tắc sau:
+
+1. CẤU TRÚC TIÊU ĐỀ: Xác định và tách các ý lớn thành các tiêu đề được đánh số (1., 2., 3., ...), tối đa 8 tiêu đề. Mỗi chủ đề hoặc nhóm nội dung lớn trở thành một mục riêng có tiêu đề. Không gộp các ý không liên quan vào cùng một mục.
+
+2. GẠCH ĐẦU DÒNG: Dưới mỗi tiêu đề được đánh số, sử dụng dấu gạch đầu dòng (-) để trình bày các nội dung chi tiết. Mỗi gạch đầu dòng phải:
+    - Mỗi gạch đầu dòng (-) đại diện cho một nhóm vấn đề lớn.
+    - Mỗi gạch đầu dòng là một đoạn văn xuôi liền mạch, không ngắt dòng giữa chừng.
+    - Tuyệt đối không dùng định dạng "<tiêu đề ý chính: nội dung>" hay bất kỳ cấu trúc nhãn nào đứng trước dấu hai chấm. Nội dung phải bắt đầu trực tiếp bằng câu văn, không có phần gán nhãn hay tiêu đề dẫn trước.
+
+3. ĐẦY ĐỦ NỘI DUNG: Không bỏ sót thông tin quan trọng. Mọi hành động, chỉ tiêu, đơn vị chịu trách nhiệm hoặc thời hạn được đề cập trong văn bản gốc đều phải xuất hiện trong bản tóm tắt.
+
+4. NGÔN NGỮ VÀ VĂN PHONG: Viết bằng tiếng Việt, giữ văn phong trang trọng, chuyên nghiệp, phù hợp với báo cáo hành chính hoặc văn bản nhà nước.
+
+5. VÍ DỤ ĐỊNH DẠNG:
+1. [Tiêu đề ý lớn]
+- [Gạch đầu dòng đầy đủ: giải thích rõ nội dung là gì, tại sao, ai chịu trách nhiệm và thực hiện như thế nào — viết thành văn xuôi liền mạch, không chỉ là mảnh ghép]
+- [Gạch đầu dòng tiếp theo với đầy đủ bối cảnh và ý nghĩa]
+
+2. [Tiêu đề ý lớn tiếp theo]
+- [Gạch đầu dòng đầy đủ...]
+
+6. LOẠI BỎ LỜI XÃ GIAO:
+Bỏ qua hoàn toàn các phần lời chào hỏi, cảm ơn, khai mạc hoặc bế mạc trong văn bản gốc.
+
+**Ví dụ về style tóm tắt:**
+"""
 
 
 def _normalize_chat_endpoint(value: str) -> str:
@@ -137,7 +166,13 @@ def _extract_message_content(response_json: Dict[str, object]) -> str:
     return str(content).strip()
 
 
-def build_each_person_prompt(locale: Optional[str] = None) -> str:
+def build_each_person_prompt(
+    locale: Optional[str] = None,
+    *,
+    max_bullet_points: int = 3,
+    compression_percent: int = 25,
+    transcript_sentence_range: str = "5–6",
+) -> str:
     _ = locale
     style_template = _load_reference_text("data/minutes_template.txt")
     style_template_block = style_template if style_template else "[Không có style template]"
@@ -179,7 +214,24 @@ YÊU CẦU ĐẦU RA:
 
 **Ví dụ về style tóm tắt:**
     """
+    EACH_PERSON_PROMPT = EACH_PERSON_PROMPT.replace(
+        "Tối đa 3 gạch đầu dòng",
+        f"Tối đa {max_bullet_points} gạch đầu dòng",
+    ).replace(
+        "tóm tắt ≤ 25% độ dài",
+        f"tóm tắt ≤ {compression_percent}% độ dài",
+    ).replace(
+        "5–6 câu trong transcript",
+        f"{transcript_sentence_range} câu trong transcript",
+    )
     return EACH_PERSON_PROMPT + "\n" + style_template_block
+
+
+def build_minutes_conclusion_prompt(locale: Optional[str] = None) -> str:
+    _ = locale
+    style_template = _load_reference_text("data/minutes_conclusion_template.txt")
+    style_template_block = style_template if style_template else "[Không có style template]"
+    return MINUTES_CONCLUSION_PROMPT + "\n" + style_template_block
 
 
 def build_conclusions_prompt(locale: Optional[str] = None) -> str:
@@ -309,14 +361,19 @@ def generate_each_person_from_transcript(
     *,
     model: Optional[str] = None,
     locale: Optional[str] = None,
-    temperature: float = 0.2,
-    max_tokens: int = 3000,
+    temperature: float = 0.1,
+    max_tokens: int = 6000,
     include_prompt: bool = False,
+    system_prompt: Optional[str] = None,
 ) -> Dict[str, object]:
     if not transcript or not transcript.strip():
         raise ValueError("Field 'transcript' must not be empty.")
 
-    prompt = build_each_person_prompt(locale)
+    prompt = (
+        system_prompt.strip()
+        if system_prompt and system_prompt.strip()
+        else build_each_person_prompt(locale)
+    )
     endpoint = _get_endpoint("TRANSCRIPT_SUMMARY")
     api_key = _get_api_key("TRANSCRIPT_SUMMARY")
     model_name = _get_model("TRANSCRIPT_SUMMARY", model)
