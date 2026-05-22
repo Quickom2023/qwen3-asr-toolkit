@@ -459,6 +459,45 @@ def _transcribe(
     include_srt: bool,
     include_text: bool,
 ) -> Dict[str, object]:
+    transcription_result = _transcribe_internal(
+        input_file=input_file,
+        context=context,
+        api_url=api_url,
+        model=model,
+        api_timeout=api_timeout,
+        temperature=temperature,
+        skip_failed=skip_failed,
+        max_retries=max_retries,
+        num_threads=num_threads,
+        vad_segment_threshold=vad_segment_threshold,
+        max_segment_seconds=max_segment_seconds,
+        vad_trigger_seconds=vad_trigger_seconds,
+        tmp_dir=tmp_dir,
+        save_srt=save_srt,
+    )
+    return _build_transcribe_response(
+        transcription_result=transcription_result,
+        include_srt=include_srt,
+        include_text=include_text,
+    )
+
+
+def _transcribe_internal(
+    input_file: str,
+    context: str,
+    api_url: str,
+    model: Optional[str],
+    api_timeout: int,
+    temperature: float,
+    skip_failed: bool,
+    max_retries: int,
+    num_threads: int,
+    vad_segment_threshold: int,
+    max_segment_seconds: int,
+    vad_trigger_seconds: int,
+    tmp_dir: str,
+    save_srt: bool,
+) -> Dict[str, object]:
     _validate_input_file(input_file)
     os.makedirs(tmp_dir, exist_ok=True)
 
@@ -533,32 +572,99 @@ def _transcribe(
         handle.write(language + "\n")
         handle.write(full_text + "\n")
 
-    srt_content = None
-    if include_srt or save_srt:
-        srt_content = _compose_srt_content(wav_list, results)
+    srt_content = _compose_srt_content(wav_list, results)
 
     srt_path = None
     if save_srt:
         srt_path = _save_srt_file(save_file, srt_content or "")
 
-    response = {
-        # "input_file": input_file,
-        # "detected_language": language,
+    return {
         "duration_seconds": round(wav_duration_seconds, 3),
         "segment_count": len(wav_list),
-        # "segments": _serialize_segments(wav_list, results),
         "failed_segments": failed_segments,
-        # "text_file": os.path.abspath(save_file),
-        # "srt_file": os.path.abspath(srt_path) if srt_path else None,
+        "detected_language": language,
+        "full_text": full_text,
+        "segments": _serialize_segments(wav_list, results),
+        "srt_content": srt_content,
+        "text_file": os.path.abspath(save_file),
+        "srt_file": os.path.abspath(srt_path) if srt_path else None,
+    }
+
+
+def _build_transcribe_response(
+    transcription_result: Dict[str, object],
+    include_srt: bool,
+    include_text: bool,
+) -> Dict[str, object]:
+    response = {
+        "duration_seconds": transcription_result["duration_seconds"],
+        "segment_count": transcription_result["segment_count"],
+        "failed_segments": transcription_result["failed_segments"],
     }
     if include_srt:
-        response["srt_content"] = srt_content
+        response["srt_content"] = transcription_result["srt_content"]
     if include_text:
-        response["full_text"] = full_text
+        response["full_text"] = transcription_result["full_text"]
     return response
 
 
+def _transcribe_uploaded_file(
+    file: Optional[UploadFile],
+    *,
+    context: str,
+    model: Optional[str],
+    api_timeout: int,
+    temperature: float,
+    skip_failed: bool,
+    max_retries: int,
+    num_threads: int,
+    vad_segment_threshold: int,
+    max_segment_seconds: int,
+    vad_trigger_seconds: int,
+    tmp_dir: str,
+    save_srt: bool,
+) -> Tuple[str, Dict[str, object]]:
+    if file is None or not file.filename:
+        raise HTTPException(status_code=400, detail="Missing file in request body field 'file'.")
+
+    os.makedirs(tmp_dir, exist_ok=True)
+    upload_root = os.path.join(tmp_dir, "uploads")
+    os.makedirs(upload_root, exist_ok=True)
+
+    original_name = os.path.basename(file.filename or "upload.wav")
+    upload_dir = tempfile.mkdtemp(prefix="upload_", dir=upload_root)
+    upload_path = os.path.join(upload_dir, original_name)
+
+    try:
+        with open(upload_path, "wb") as handle:
+            shutil.copyfileobj(file.file, handle)
+
+        transcription_result = _transcribe_internal(
+            input_file=upload_path,
+            context=context,
+            api_url=_get_default_api_url(),
+            model=model,
+            api_timeout=api_timeout,
+            temperature=temperature,
+            skip_failed=skip_failed,
+            max_retries=max_retries,
+            num_threads=num_threads,
+            vad_segment_threshold=vad_segment_threshold,
+            max_segment_seconds=max_segment_seconds,
+            vad_trigger_seconds=vad_trigger_seconds,
+            tmp_dir=tmp_dir,
+            save_srt=save_srt,
+        )
+        return original_name, transcription_result
+    finally:
+        file.file.close()
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        _try_cleanup_cache_root(tmp_dir)
+
+
 def _raise_as_http_error(exc: Exception) -> None:
+    if isinstance(exc, HTTPException):
+        raise exc
     if isinstance(exc, FileNotFoundError):
         raise HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, ValueError):
@@ -716,24 +822,10 @@ def transcribe_upload(
     include_text: bool = Form(False),
 ) -> Dict[str, object]:
     _verify_api_key(x_api_key)
-    if file is None or not file.filename:
-        raise HTTPException(status_code=400, detail="Missing file in request body field 'file'.")
-    os.makedirs(tmp_dir, exist_ok=True)
-    upload_root = os.path.join(tmp_dir, "uploads")
-    os.makedirs(upload_root, exist_ok=True)
-
-    original_name = os.path.basename(file.filename or "upload.wav")
-    upload_dir = tempfile.mkdtemp(prefix="upload_", dir=upload_root)
-    upload_path = os.path.join(upload_dir, original_name)
-
     try:
-        with open(upload_path, "wb") as handle:
-            shutil.copyfileobj(file.file, handle)
-
-        result = _transcribe(
-            input_file=upload_path,
+        original_name, transcription_result = _transcribe_uploaded_file(
+            file=file,
             context=context,
-            api_url=_get_default_api_url(),
             model=model,
             api_timeout=api_timeout,
             temperature=temperature,
@@ -745,6 +837,9 @@ def transcribe_upload(
             vad_trigger_seconds=vad_trigger_seconds,
             tmp_dir=tmp_dir,
             save_srt=save_srt,
+        )
+        result = _build_transcribe_response(
+            transcription_result=transcription_result,
             include_srt=include_srt,
             include_text=include_text,
         )
@@ -752,10 +847,68 @@ def transcribe_upload(
         return result
     except Exception as exc:
         _raise_as_http_error(exc)
-    finally:
-        file.file.close()
-        shutil.rmtree(upload_dir, ignore_errors=True)
-        _try_cleanup_cache_root(tmp_dir)
+
+
+@app.post("/v1/audio/transcriptions")
+def transcribe_openai(
+    file: Optional[UploadFile] = File(None),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+    model: Optional[str] = Form(None),
+    prompt: str = Form(DEFAULT_CONTEXT),
+    temperature: float = Form(0.2),
+    response_format: str = Form("json"),
+    language: Optional[str] = Form(None),
+    api_timeout: int = Form(300),
+    skip_failed: bool = Form(False),
+    max_retries: int = Form(10),
+    num_threads: int = Form(8),
+    vad_segment_threshold: int = Form(60),
+    max_segment_seconds: int = Form(120),
+    vad_trigger_seconds: int = Form(70),
+    tmp_dir: str = Form(DEFAULT_TMP_DIR),
+    save_srt: bool = Form(False),
+) -> Dict[str, object]:
+    del language
+    _verify_api_key(x_api_key)
+
+    try:
+        _, transcription_result = _transcribe_uploaded_file(
+            file=file,
+            context=prompt,
+            model=model,
+            api_timeout=api_timeout,
+            temperature=temperature,
+            skip_failed=skip_failed,
+            max_retries=max_retries,
+            num_threads=num_threads,
+            vad_segment_threshold=vad_segment_threshold,
+            max_segment_seconds=max_segment_seconds,
+            vad_trigger_seconds=vad_trigger_seconds,
+            tmp_dir=tmp_dir,
+            save_srt=save_srt,
+        )
+
+        normalized_format = response_format.strip().lower()
+        if normalized_format == "json":
+            return {
+                "text": transcription_result["full_text"],
+                "language": transcription_result["detected_language"],
+            }
+        if normalized_format == "verbose_json":
+            return {
+                "task": "transcribe",
+                "language": transcription_result["detected_language"],
+                "duration": transcription_result["duration_seconds"],
+                "text": transcription_result["full_text"],
+                "segments": transcription_result["segments"],
+                "failed_segments": transcription_result["failed_segments"],
+            }
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported response_format. Use 'json' or 'verbose_json'.",
+        )
+    except Exception as exc:
+        _raise_as_http_error(exc)
 
 
 def run() -> None:
