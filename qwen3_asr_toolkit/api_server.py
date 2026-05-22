@@ -869,7 +869,7 @@ def transcribe_openai(
     save_srt: bool = Form(False),
 ) -> Dict[str, object]:
     del language
-    _verify_api_key(x_api_key)
+    # _verify_api_key(x_api_key)
 
     try:
         _, transcription_result = _transcribe_uploaded_file(
