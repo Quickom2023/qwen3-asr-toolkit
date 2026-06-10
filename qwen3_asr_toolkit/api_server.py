@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 from collections import Counter
 from datetime import timedelta
 from typing import Dict, List, Optional, Tuple
@@ -62,6 +63,8 @@ def _get_default_summary_model() -> str:
 
 
 app = FastAPI(title="Qwen3-ASR Toolkit API", version="1.0.0")
+_shared_vad_model = None
+_shared_vad_model_lock = threading.Lock()
 
 
 def _verify_api_key(x_api_key: Optional[str]) -> None:
@@ -70,6 +73,15 @@ def _verify_api_key(x_api_key: Optional[str]) -> None:
         return
     if x_api_key != expected_api_key:
         raise HTTPException(status_code=401, detail="Invalid or missing X-Api-Key header")
+
+
+def _get_shared_vad_model():
+    global _shared_vad_model
+    if _shared_vad_model is None:
+        with _shared_vad_model_lock:
+            if _shared_vad_model is None:
+                _shared_vad_model = load_silero_vad(onnx=True)
+    return _shared_vad_model
 
 
 def _try_cleanup_cache_root(tmp_dir: str) -> None:
@@ -513,10 +525,9 @@ def _transcribe_internal(
     wav_duration_seconds = len(wav) / WAV_SAMPLE_RATE
 
     if wav_duration_seconds >= vad_trigger_seconds:
-        worker_vad_model = load_silero_vad(onnx=True)
         wav_list = process_vad(
             wav,
-            worker_vad_model,
+            _get_shared_vad_model(),
             segment_threshold_s=vad_segment_threshold,
             max_segment_threshold_s=max_segment_seconds,
         )
