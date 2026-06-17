@@ -1,8 +1,10 @@
+import base64
 import concurrent.futures
 import os
 import re
 import shutil
 import tempfile
+import secrets
 import threading
 from collections import Counter
 from datetime import timedelta
@@ -12,7 +14,10 @@ from urllib.parse import urlparse
 import requests
 import srt
 import uvicorn
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from silero_vad import load_silero_vad
 try:
@@ -62,7 +67,13 @@ def _get_default_summary_model() -> str:
     return os.getenv("OPENAI_SUMMARY_MODEL", "gpt-4.1-mini")
 
 
-app = FastAPI(title="Qwen3-ASR Toolkit API", version="1.0.0")
+app = FastAPI(
+    title="Qwen3-ASR Toolkit API",
+    version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 _shared_vad_model = None
 _shared_vad_model_lock = threading.Lock()
 
@@ -73,6 +84,63 @@ def _verify_api_key(x_api_key: Optional[str]) -> None:
         return
     if x_api_key != expected_api_key:
         raise HTTPException(status_code=401, detail="Invalid or missing X-Api-Key header")
+
+
+def _verify_docs_auth(request: Request) -> bool:
+    """Check HTTP Basic Auth for /docs pages. Username: admin, Password: QWEN3_ASR_API_KEY."""
+    expected_key = os.getenv("QWEN3_ASR_API_KEY")
+    if not expected_key:
+        return True
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Basic "):
+        return False
+    try:
+        decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+        username, password = decoded.split(":", 1)
+        return username == "admin" and secrets.compare_digest(password, expected_key)
+    except Exception:
+        return False
+
+
+def _docs_unauthorized_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=401,
+        content={"detail": "Unauthorized"},
+        headers={"WWW-Authenticate": 'Basic realm="Qwen3-ASR Docs"'},
+    )
+
+
+@app.get("/openapi.json", include_in_schema=False)
+def get_openapi_schema(request: Request):
+    if not _verify_docs_auth(request):
+        return _docs_unauthorized_response()
+    return JSONResponse(
+        get_openapi(
+            title=app.title,
+            version=app.version,
+            routes=app.routes,
+        )
+    )
+
+
+@app.get("/docs", include_in_schema=False)
+def docs_page(request: Request):
+    if not _verify_docs_auth(request):
+        return _docs_unauthorized_response()
+    return get_swagger_ui_html(
+        openapi_url="/openapi.json",
+        title=f"{app.title} - Docs",
+    )
+
+
+@app.get("/redoc", include_in_schema=False)
+def redoc_page(request: Request):
+    if not _verify_docs_auth(request):
+        return _docs_unauthorized_response()
+    return get_redoc_html(
+        openapi_url="/openapi.json",
+        title=f"{app.title} - ReDoc",
+    )
 
 
 def _get_shared_vad_model():
