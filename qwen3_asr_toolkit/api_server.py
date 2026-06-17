@@ -1,4 +1,4 @@
-﻿import concurrent.futures
+import concurrent.futures
 import os
 import re
 import shutil
@@ -917,6 +917,58 @@ def transcribe_openai(
         raise HTTPException(
             status_code=400,
             detail="Unsupported response_format. Use 'json' or 'verbose_json'.",
+        )
+    except Exception as exc:
+        _raise_as_http_error(exc)
+        
+@app.post("/api/v1/audio/transcriptions")
+def transcribe_openai(
+    file: Optional[UploadFile] = File(None),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+    model: Optional[str] = Form("Qwen/Qwen3-ASR-1.7B"),
+    prompt: str = Form(DEFAULT_CONTEXT),
+    temperature: float = Form(0.2),
+    response_format: str = Form("json"),
+    language: Optional[str] = Form(None),
+    api_timeout: int = Form(300),
+    skip_failed: bool = Form(False),
+    max_retries: int = Form(10),
+    num_threads: int = Form(8),
+    vad_segment_threshold: int = Form(60),
+    max_segment_seconds: int = Form(120),
+    vad_trigger_seconds: int = Form(70),
+    tmp_dir: str = Form(DEFAULT_TMP_DIR),
+    save_srt: bool = Form(False),
+) -> Dict[str, object]:
+    del language
+    _verify_api_key(x_api_key)
+
+    try:
+        _, transcription_result = _transcribe_uploaded_file(
+            file=file,
+            context=prompt,
+            model=model,
+            api_timeout=api_timeout,
+            temperature=temperature,
+            skip_failed=skip_failed,
+            max_retries=max_retries,
+            num_threads=num_threads,
+            vad_segment_threshold=vad_segment_threshold,
+            max_segment_seconds=max_segment_seconds,
+            vad_trigger_seconds=vad_trigger_seconds,
+            tmp_dir=tmp_dir,
+            save_srt=save_srt,
+        )
+
+        normalized_format = response_format.strip().lower()
+        if normalized_format == "json":
+            return {
+                "status": "ok",
+                "transcript": transcription_result["full_text"],
+            }
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported response_format. Use 'json'.",
         )
     except Exception as exc:
         _raise_as_http_error(exc)
