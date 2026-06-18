@@ -210,16 +210,32 @@ class QwenASR:
         cleaned = re.sub(r"\s+", " ", cleaned)
         return cleaned.strip()
 
-    def remove_chinese_characters(self, text: str) -> str:
-        CJK = r"\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF"
+    def remove_foreign_characters(self, text: str) -> str:
+        """Remove non-Latin scripts the ASR may hallucinate for Vietnamese audio."""
+        # Thai, Lao, Korean, Japanese, CJK, Cyrillic, Arabic, Devanagari
+        FOREIGN = (
+            r"\u0400-\u04FF"  # Cyrillic
+            r"\u0600-\u06FF"  # Arabic
+            r"\u0900-\u097F"  # Devanagari
+            r"\u0E00-\u0E7F"  # Thai
+            r"\u0E80-\u0EFF"  # Lao
+            r"\u1100-\u11FF"  # Hangul Jamo
+            r"\u3040-\u309F"  # Hiragana
+            r"\u30A0-\u30FF"  # Katakana
+            r"\u3130-\u318F"  # Hangul Compatibility Jamo
+            r"\u3400-\u4DBF"  # CJK Extension A
+            r"\u4E00-\u9FFF"  # CJK Unified Ideographs
+            r"\uAC00-\uD7AF"  # Hangul Syllables
+            r"\uF900-\uFAFF"  # CJK Compatibility Ideographs
+        )
 
-        # Remove comma/dot only if adjacent to Chinese chars
-        text = re.sub(fr"(?<=[{CJK}])[,，。.]|[,，。.](?=[{CJK}])", "", text)
+        # Remove comma/dot only if adjacent to foreign chars
+        text = re.sub(fr"(?<=[{FOREIGN}])[,，。.]|[,，。.](?=[{FOREIGN}])", "", text)
 
-        # Remove Chinese chars
-        text = re.sub(fr"[{CJK}]+", "", text)
+        # Remove foreign chars
+        text = re.sub(fr"[{FOREIGN}]+", "", text)
 
-        # Optional cleanup
+        # Cleanup extra whitespace
         text = re.sub(r"\s{2,}", " ", text)
         text = re.sub(r"\s+([,.;!?])", r"\1", text)
         return text.strip()
@@ -326,7 +342,7 @@ class QwenASR:
                 response_json = response.json()
                 language, recog_text = self._parse_audio_transcription_response(response_json)
                 recog_text = self.post_text_process(recog_text)
-                recog_text = self.remove_chinese_characters(recog_text)
+                recog_text = self.remove_foreign_characters(recog_text)
                 return language, recog_text
             except Exception as e:
                 try:
