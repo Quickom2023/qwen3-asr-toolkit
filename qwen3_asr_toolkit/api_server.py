@@ -1,4 +1,4 @@
-import concurrent.futures
+﻿import concurrent.futures
 import os
 import re
 import shutil
@@ -445,7 +445,7 @@ def _summarize_text_with_openai(
     }
 
     try:
-        response = requests.post(endpoint, headers=headers, json=payload, timeout=120)
+        response = requests.post(endpoint, headers=headers, json=payload, timeout=300)
         response.raise_for_status()
     except requests.HTTPError as exc:
         detail = exc.response.text if exc.response is not None else str(exc)
