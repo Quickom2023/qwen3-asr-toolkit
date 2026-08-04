@@ -26,9 +26,6 @@ def _validate_librosa_audio(wav_data: np.ndarray) -> None:
         raise ValueError("librosa returned empty audio.")
     if np.isnan(wav_data).any() or np.isinf(wav_data).any():
         raise ValueError("librosa returned NaN/Inf values.")
-    if np.all(wav_data == 0):
-        raise ValueError("librosa returned all-zero audio.")
-
 
 def load_audio(file_path: str) -> np.ndarray:
     recovered_path = None
@@ -78,6 +75,18 @@ def load_audio(file_path: str) -> np.ndarray:
                     os.remove(recovered_path)
                 except OSError:
                     pass
+
+
+def has_speech(wav: np.ndarray, worker_vad_model) -> bool:
+    speech_timestamps = get_speech_timestamps(
+        wav,
+        worker_vad_model,
+        sampling_rate=WAV_SAMPLE_RATE,
+        return_seconds=False,
+        min_speech_duration_ms=10,
+        min_silence_duration_ms=500,
+    )
+    return bool(speech_timestamps)
 
 
 def process_vad(wav: np.ndarray, worker_vad_model, segment_threshold_s: int = 120, max_segment_threshold_s: int = 180) -> list[np.ndarray]:

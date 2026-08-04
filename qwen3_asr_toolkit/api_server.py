@@ -23,6 +23,7 @@ except Exception:
 
 from qwen3_asr_toolkit.audio_tools import (
     WAV_SAMPLE_RATE,
+    has_speech,
     load_audio,
     process_vad,
     save_audio_file,
@@ -532,19 +533,42 @@ def _transcribe_internal(
     wav = load_audio(input_file)
     wav_duration_seconds = len(wav) / WAV_SAMPLE_RATE
 
+    vad_model = _get_shared_vad_model()
+    source_name = os.path.basename(urlparse(input_file).path) if input_file.startswith(("http://", "https://")) else os.path.basename(input_file)
+    source_name = source_name or "input_audio"
+    source_stem = os.path.splitext(source_name)[0]
+    save_file = _build_output_path(input_file)
+
+    if not has_speech(wav, vad_model):
+        with open(save_file, "w", encoding="utf-8") as handle:
+            handle.write("Unknown\n\n")
+
+        srt_path = None
+        if save_srt:
+            srt_path = _save_srt_file(save_file, "")
+
+        return {
+            "duration_seconds": round(wav_duration_seconds, 3),
+            "segment_count": 0,
+            "failed_segments": [],
+            "detected_language": "Unknown",
+            "full_text": "",
+            "segments": [],
+            "srt_content": "",
+            "text_file": os.path.abspath(save_file),
+            "srt_file": os.path.abspath(srt_path) if srt_path else None,
+        }
+
     if wav_duration_seconds >= vad_trigger_seconds:
         wav_list = process_vad(
             wav,
-            _get_shared_vad_model(),
+            vad_model,
             segment_threshold_s=vad_segment_threshold,
             max_segment_threshold_s=max_segment_seconds,
         )
     else:
         wav_list = [(0, len(wav), wav)]
 
-    source_name = os.path.basename(urlparse(input_file).path) if input_file.startswith(("http://", "https://")) else os.path.basename(input_file)
-    source_name = source_name or "input_audio"
-    source_stem = os.path.splitext(source_name)[0]
     save_dir = tempfile.mkdtemp(prefix=source_stem + "_", dir=tmp_dir)
 
     wav_path_list = []
@@ -586,7 +610,6 @@ def _transcribe_internal(
     full_text = " ".join(text for _, text in results).strip()
     language = Counter(languages).most_common(1)[0][0] if languages else "Unknown"
 
-    save_file = _build_output_path(input_file)
     with open(save_file, "w", encoding="utf-8") as handle:
         handle.write(language + "\n")
         handle.write(full_text + "\n")
