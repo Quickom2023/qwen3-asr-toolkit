@@ -77,15 +77,19 @@ def load_audio(file_path: str) -> np.ndarray:
                     pass
 
 
-def has_speech(wav: np.ndarray, worker_vad_model) -> bool:
+def has_speech(wav: np.ndarray, worker_vad_model, threshold: float = 0.2) -> bool:
     speech_timestamps = get_speech_timestamps(
         wav,
         worker_vad_model,
+        threshold=threshold,
         sampling_rate=WAV_SAMPLE_RATE,
         return_seconds=False,
         min_speech_duration_ms=10,
         min_silence_duration_ms=500,
     )
+    # print(f"has_speech timestamps count={len(speech_timestamps) if speech_timestamps else 0}")
+    # if speech_timestamps:
+    #     print(f"has_speech timestamps preview={speech_timestamps[:5]}")
     return bool(speech_timestamps)
 
 
