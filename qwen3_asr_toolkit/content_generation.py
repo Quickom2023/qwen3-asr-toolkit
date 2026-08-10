@@ -4,9 +4,17 @@ from typing import Dict, List, Optional
 
 import requests
 
+from qwen3_asr_toolkit.qwen3asr import QwenASR
 
-DEFAULT_CHAT_MODEL = "gpt-4.1-mini"
+
+DEFAULT_CHAT_MODEL = "qwen3.5:4b"
 DEFAULT_TIMEOUT_SECONDS = 300
+OLLAMA_TOP_P = 1
+OLLAMA_TOP_K = 40
+OLLAMA_REPEAT_PENALTY = 1.0
+OLLAMA_NUM_CTX = 32768
+OLLAMA_THINK = False
+OLLAMA_KEEP_ALIVE = "-5m"
 MINUTES_CONCLUSION_PROMPT = """
 Bạn là trợ lý tóm tắt văn bản chuyên nghiệp. Nhiệm vụ của bạn là tóm tắt nội dung một cách rõ ràng, đầy đủ và có cấu trúc mạch lạc.
 
@@ -40,11 +48,11 @@ Bỏ qua hoàn toàn các phần lời chào hỏi, cảm ơn, khai mạc hoặc
 
 def _normalize_chat_endpoint(value: str) -> str:
     cleaned = value.strip().rstrip("/")
-    if cleaned.endswith("/chat/completions"):
+    if cleaned.endswith("/api/chat"):
         return cleaned
     if cleaned.endswith("/v1"):
-        return cleaned + "/chat/completions"
-    return cleaned + "/v1/chat/completions"
+        cleaned = cleaned[: -len("/v1")]
+    return cleaned + "/api/chat"
 
 
 def _get_endpoint(prefix: str) -> str:
@@ -65,11 +73,7 @@ def _get_api_key(prefix: str) -> str:
     if api_key:
         return api_key
 
-    fallback_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if fallback_key:
-        return fallback_key
-
-    raise ValueError(f"{prefix}_API_KEY or OPENAI_API_KEY is not configured.")
+    return os.getenv("OPENAI_API_KEY", "").strip()
 
 
 def _get_model(prefix: str, explicit_model: Optional[str]) -> str:
@@ -108,17 +112,25 @@ def _call_chat_completion(
 ) -> Dict[str, object]:
     payload = {
         "model": model,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
+        "stream": False,
+        "think": OLLAMA_THINK,
+        "keep_alive": OLLAMA_KEEP_ALIVE,
+        "options": {
+            "temperature": temperature,
+            "top_p": OLLAMA_TOP_P,
+            "top_k": OLLAMA_TOP_K,
+            "repeat_penalty": OLLAMA_REPEAT_PENALTY,
+            "num_ctx": OLLAMA_NUM_CTX,
+            "num_predict": max_tokens,
+        },
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
     }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
 
     try:
         response = requests.post(
@@ -138,15 +150,7 @@ def _call_chat_completion(
 
 
 def _extract_message_content(response_json: Dict[str, object]) -> str:
-    choices = response_json.get("choices")
-    if not isinstance(choices, list) or not choices:
-        raise ValueError("LLM response missing choices.")
-
-    first_choice = choices[0]
-    if not isinstance(first_choice, dict):
-        raise ValueError("LLM response choice has invalid format.")
-
-    message = first_choice.get("message")
+    message = response_json.get("message")
     if not isinstance(message, dict):
         raise ValueError("LLM response missing message.")
 
@@ -393,7 +397,7 @@ def generate_each_person_from_transcript(
         temperature=temperature,
         max_tokens=max_tokens,
     )
-    generated_text = _extract_message_content(response_json)
+    generated_text = QwenASR.remove_foreign_characters(_extract_message_content(response_json))
 
     response: Dict[str, object] = {
         "content": generated_text,
@@ -435,7 +439,7 @@ def generate_conclusions_from_summaries(
         temperature=temperature,
         max_tokens=max_tokens,
     )
-    generated_text = _extract_message_content(response_json)
+    generated_text = QwenASR.remove_foreign_characters(_extract_message_content(response_json))
 
     response: Dict[str, object] = {
         "content": generated_text,

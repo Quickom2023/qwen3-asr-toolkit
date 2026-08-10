@@ -39,6 +39,12 @@ from qwen3_asr_toolkit.qwen3asr import QwenASR
 
 DEFAULT_CONTEXT = "Transcribe with punctuation. Preserve sentence meaning across pauses."
 DEFAULT_TMP_DIR = os.path.join(os.path.expanduser("~"), "qwen3-asr-cache")
+OLLAMA_TOP_P = 1
+OLLAMA_TOP_K = 40
+OLLAMA_REPEAT_PENALTY = 1.0
+OLLAMA_NUM_CTX = 32768
+OLLAMA_THINK = False
+OLLAMA_KEEP_ALIVE = "-5m"
 
 if load_dotenv and find_dotenv:
     load_dotenv(find_dotenv(usecwd=True), override=False)
@@ -60,7 +66,7 @@ def _get_openai_base_url() -> str:
 
 
 def _get_default_summary_model() -> str:
-    return os.getenv("OPENAI_SUMMARY_MODEL", "gpt-4.1-mini")
+    return os.getenv("OPENAI_SUMMARY_MODEL", "qwen3.5:4b")
 
 
 app = FastAPI(
@@ -339,17 +345,9 @@ def _uppercase_first_word(text: str) -> str:
 
 
 def _extract_openai_message_content(response_json: Dict[str, object]) -> str:
-    choices = response_json.get("choices")
-    if not isinstance(choices, list) or not choices:
-        raise ValueError("OpenAI response missing choices")
-
-    first_choice = choices[0]
-    if not isinstance(first_choice, dict):
-        raise ValueError("OpenAI response has invalid choice format")
-
-    message = first_choice.get("message")
+    message = response_json.get("message")
     if not isinstance(message, dict):
-        raise ValueError("OpenAI response missing message")
+        raise ValueError("LLM response missing message")
 
     content = message.get("content", "")
     if isinstance(content, str):
@@ -418,21 +416,33 @@ def _summarize_text_with_openai(
     if not text or not text.strip():
         raise ValueError("Field 'text' must not be empty.")
 
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    if not openai_api_key:
-        raise ValueError("OPENAI_API_KEY is not configured.")
+    openai_api_key = os.getenv("OPENAI_API_KEY", "")
 
     model_name = model or _get_default_summary_model()
-    endpoint = _get_openai_base_url() + "/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {openai_api_key}",
-        "Content-Type": "application/json",
-    }
+    base_url = _get_openai_base_url()
+    if base_url.endswith("/api/chat"):
+        endpoint = base_url
+    else:
+        if base_url.endswith("/v1"):
+            base_url = base_url[: -len("/v1")]
+        endpoint = base_url + "/api/chat"
+    headers = {"Content-Type": "application/json"}
+    if openai_api_key:
+        headers["Authorization"] = f"Bearer {openai_api_key}"
     # print(_build_summary_system_prompt(locale))
     payload = {
         "model": model_name,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
+        "stream": False,
+        "think": OLLAMA_THINK,
+        "keep_alive": OLLAMA_KEEP_ALIVE,
+        "options": {
+            "temperature": temperature,
+            "top_p": OLLAMA_TOP_P,
+            "top_k": OLLAMA_TOP_K,
+            "repeat_penalty": OLLAMA_REPEAT_PENALTY,
+            "num_ctx": OLLAMA_NUM_CTX,
+            "num_predict": max_tokens,
+        },
         "messages": [
             {
                 "role": "system",
@@ -455,7 +465,7 @@ def _summarize_text_with_openai(
         raise ValueError(f"OpenAI API request failed: {exc}") from exc
 
     response_json = response.json()
-    summary = _extract_openai_message_content(response_json)
+    summary = QwenASR.remove_foreign_characters(_extract_openai_message_content(response_json))
     return {
         # "model": model_name,
         "summary": summary,
