@@ -41,17 +41,18 @@ from qwen3_asr_toolkit.speaker_attribution import (
 )
 
 
+if load_dotenv and find_dotenv:
+    load_dotenv(find_dotenv(usecwd=True), override=False)
+
+
 DEFAULT_CONTEXT = "Transcribe with punctuation. Preserve sentence meaning across pauses."
 DEFAULT_TMP_DIR = os.path.join(os.path.expanduser("~"), "qwen3-asr-cache")
 OLLAMA_TOP_P = 1
 OLLAMA_TOP_K = 40
 OLLAMA_REPEAT_PENALTY = 1.0
-OLLAMA_NUM_CTX = 32768
+OLLAMA_NUM_CTX = int(os.getenv("DEFAULT_NUM_CTX", "32768"))
 OLLAMA_THINK = False
 OLLAMA_KEEP_ALIVE = "-5m"
-
-if load_dotenv and find_dotenv:
-    load_dotenv(find_dotenv(usecwd=True), override=False)
 
 
 def _is_true_env(name: str) -> bool:
