@@ -6,13 +6,25 @@ import requests
 
 from qwen3_asr_toolkit.qwen3asr import QwenASR
 
+try:
+    from dotenv import find_dotenv, load_dotenv  # type: ignore
+except Exception:
+    find_dotenv = None
+    load_dotenv = None
+
+# Mirrors speaker_attribution.py: load .env directly rather than relying on being
+# imported after another module's load_dotenv() call. override=False keeps real
+# environment variables authoritative over the file.
+if load_dotenv and find_dotenv:
+    load_dotenv(find_dotenv(usecwd=True), override=False)
+
 
 DEFAULT_CHAT_MODEL = "qwen3.5:4b"
 DEFAULT_TIMEOUT_SECONDS = 300
 OLLAMA_TOP_P = 1
 OLLAMA_TOP_K = 40
 OLLAMA_REPEAT_PENALTY = 1.0
-OLLAMA_NUM_CTX = 32768
+OLLAMA_NUM_CTX = int(os.getenv("DEFAULT_NUM_CTX", "32768"))
 OLLAMA_THINK = False
 OLLAMA_KEEP_ALIVE = "-5m"
 MINUTES_CONCLUSION_PROMPT = """
