@@ -35,6 +35,10 @@ from qwen3_asr_toolkit.content_generation import (
     generate_conclusions_from_summaries,
 )
 from qwen3_asr_toolkit.qwen3asr import QwenASR
+from qwen3_asr_toolkit.speaker_attribution import (
+    attribute_speakers_as_srt,
+    client_from_env,
+)
 
 
 DEFAULT_CONTEXT = "Transcribe with punctuation. Preserve sentence meaning across pauses."
@@ -153,6 +157,12 @@ class GenerateConclusionsRequest(BaseModel):
     temperature: float = 0.1
     max_tokens: int = 10000
     include_prompt: bool = False
+
+
+class AttributeSpeakersRequest(BaseModel):
+    srt_content: str
+    model: Optional[str] = None
+    roster: Optional[List[str]] = None
 
 
 def _split_markdown_sections(markdown_text: str) -> List[Tuple[str, str]]:
@@ -810,6 +820,24 @@ def summarize_conclusion(
             # temperature=request.temperature,
             # max_tokens=request.max_tokens,
             # include_prompt=request.include_prompt,
+        )
+    except Exception as exc:
+        _raise_as_http_error(exc)
+
+
+@app.post("/attribute-speakers")
+def attribute_speakers_srt(
+    request: AttributeSpeakersRequest,
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+) -> List[Dict[str, str]]:
+    _verify_api_key(x_api_key)
+    try:
+        if not request.srt_content or not request.srt_content.strip():
+            raise ValueError("Field 'srt_content' must not be empty.")
+        return attribute_speakers_as_srt(
+            request.srt_content,
+            client=client_from_env(request.model),
+            roster=request.roster,
         )
     except Exception as exc:
         _raise_as_http_error(exc)
