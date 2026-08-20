@@ -103,7 +103,7 @@ def build_transcript(cues: List[Cue]) -> Transcript:
 
 
 DEFAULT_TIMEOUT_SECONDS = 300
-DEFAULT_NUM_CTX = 32768
+DEFAULT_NUM_CTX = int(os.getenv("DEFAULT_NUM_CTX", "32768"))
 DEFAULT_CHAT_MODEL = "qwen3.5:4b"
 _FENCE_PATTERN = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
