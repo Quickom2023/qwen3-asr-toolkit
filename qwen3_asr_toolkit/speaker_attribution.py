@@ -489,6 +489,35 @@ def resolve_anchors(
     return _dedupe(anchors)
 
 
+def _is_name_variant(name_a: str, name_b: str) -> bool:
+    tokens_a = set(normalize_name(name_a).split())
+    tokens_b = set(normalize_name(name_b).split())
+    if not tokens_a or not tokens_b:
+        return False
+    return tokens_a <= tokens_b or tokens_b <= tokens_a
+
+
+def _merge_handoff_self_intro_names(anchors: List[Anchor]) -> Dict[str, str]:
+    """Map a self_intro's name to the immediately preceding handoff's name when
+    the two are name variants of each other (e.g. a short form vs. the full name).
+
+    Scoped narrowly to adjacent (handoff, self_intro) pairs -- the pattern where
+    a chair hands the floor to someone by name and that same person's own
+    self-introduction follows right after, sometimes with a shorter form of
+    their name. Matching on similarity anywhere in the transcript, not just
+    this adjacency, would risk merging distinct people who share a surname.
+    """
+    mapping: Dict[str, str] = {}
+    for previous, current in zip(anchors, anchors[1:]):
+        if (
+            previous.type == "handoff"
+            and current.type == "self_intro"
+            and _is_name_variant(previous.name, current.name)
+        ):
+            mapping[current.name] = previous.name
+    return mapping
+
+
 SIMILARITY_THRESHOLD = 0.85
 _CONFUSABLE_RULES = (("tr", "ch"), ("x", "s"), ("gi", "d"), ("r", "d"), ("l", "n"))
 
@@ -659,7 +688,13 @@ def attribute_speakers(
                 failures += 1
 
     anchors = resolve_anchors(list(zip(chunks, results)), transcript)
-    name_map = canonicalize([anchor.name for anchor in anchors], roster=roster)
+    variant_map = _merge_handoff_self_intro_names(anchors)
+    name_map = canonicalize(
+        [variant_map.get(anchor.name, anchor.name) for anchor in anchors],
+        roster=roster,
+    )
+    for original, rewritten in variant_map.items():
+        name_map[original] = name_map.get(rewritten, rewritten)
     turns, warnings = build_turns(anchors, transcript, name_map=name_map)
 
     if failures:
