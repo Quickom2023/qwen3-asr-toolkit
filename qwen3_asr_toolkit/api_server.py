@@ -34,6 +34,10 @@ from qwen3_asr_toolkit.content_generation import (
     generate_each_person_from_transcript,
     generate_conclusions_from_summaries,
 )
+from qwen3_asr_toolkit.report_generation import (
+    GroupTranscript,
+    generate_report_from_groups,
+)
 from qwen3_asr_toolkit.qwen3asr import QwenASR
 from qwen3_asr_toolkit.speaker_attribution import (
     attribute_speakers_as_srt,
@@ -811,6 +815,35 @@ async def summarize_minutes(
 
         output_markdown = _build_minutes_markdown(ordered_sections)
         return {"content": output_markdown}
+    except Exception as exc:
+        _raise_as_http_error(exc)
+    finally:
+        file.file.close()
+
+
+@app.post("/summarize/report")
+async def summarize_report(
+    file: Optional[UploadFile] = File(None),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+) -> Dict[str, object]:
+    _verify_api_key(x_api_key)
+    if file is None or not file.filename:
+        raise HTTPException(status_code=400, detail="Missing file in request body field 'file'.")
+
+    try:
+        markdown_text = (await file.read()).decode("utf-8-sig")
+        sections = _split_markdown_sections(markdown_text)
+        if not sections:
+            raise ValueError(
+                "File markdown phải có ít nhất một tiêu đề, mỗi tiêu đề là một tổ "
+                "và nội dung bên dưới là biên bản của tổ đó."
+            )
+
+        groups = [
+            GroupTranscript(group_id=title, transcript=transcript)
+            for title, transcript in sections
+        ]
+        return generate_report_from_groups(groups)
     except Exception as exc:
         _raise_as_http_error(exc)
     finally:
