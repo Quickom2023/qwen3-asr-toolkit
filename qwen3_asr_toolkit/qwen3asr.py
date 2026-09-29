@@ -210,7 +210,8 @@ class QwenASR:
         cleaned = re.sub(r"\s+", " ", cleaned)
         return cleaned.strip()
 
-    def remove_foreign_characters(self, text: str) -> str:
+    @staticmethod
+    def remove_foreign_characters(text: str) -> str:
         """Remove non-Latin scripts the ASR may hallucinate for Vietnamese audio."""
         # Thai, Lao, Korean, Japanese, CJK, Cyrillic, Arabic, Devanagari
         FOREIGN = (

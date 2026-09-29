@@ -129,6 +129,7 @@ def _clean(value: object) -> str:
 
 # ---------------------------------------------------------------- stage 1
 
+# additionalProperties is required by OpenAI strict mode; Ollama ignores it.
 EXTRACT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -142,10 +143,12 @@ EXTRACT_SCHEMA = {
                     "noi_dung": {"type": "string"},
                 },
                 "required": ["huong", "doi_tuong", "noi_dung"],
+                "additionalProperties": False,
             },
         }
     },
     "required": ["y_kien"],
+    "additionalProperties": False,
 }
 
 EXTRACT_SYSTEM_PROMPT = """Bạn bóc ý kiến từ biên bản thảo luận của một tổ.
@@ -231,6 +234,7 @@ OUTLINE_SCHEMA = {
         "cu_the": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["chung", "cu_the"],
+    "additionalProperties": False,
 }
 
 OUTLINE_SYSTEM_PROMPT = """Bạn lập đề cương cho báo cáo tổng hợp ý kiến thảo luận tổ.
@@ -323,10 +327,12 @@ MAP_SCHEMA = {
                     "muc": {"type": "string"},
                 },
                 "required": ["id", "muc"],
+                "additionalProperties": False,
             },
         }
     },
     "required": ["anh_xa"],
+    "additionalProperties": False,
 }
 
 MAP_SYSTEM_PROMPT = """Bạn xếp từng ý kiến vào đúng mục của đề cương.
@@ -430,10 +436,12 @@ WRITE_SCHEMA = {
                     "ids": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["cau", "ids"],
+                "additionalProperties": False,
             },
         }
     },
     "required": ["y"],
+    "additionalProperties": False,
 }
 
 WRITE_SYSTEM_PROMPT = """Bạn viết nội dung một mục của báo cáo tổng hợp ý kiến thảo luận tổ.

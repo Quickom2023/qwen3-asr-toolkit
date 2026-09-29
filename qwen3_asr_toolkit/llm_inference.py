@@ -27,7 +27,7 @@ if load_dotenv and find_dotenv:
     load_dotenv(find_dotenv(usecwd=True), override=False)
 
 
-DEFAULT_CHAT_MODEL = "qwen3.5:4b"
+DEFAULT_CHAT_MODEL = "gpt-4.1-mini"
 DEFAULT_TIMEOUT_SECONDS = 300
 DEFAULT_NUM_CTX = int(os.getenv("DEFAULT_NUM_CTX", "32768"))
 DEFAULT_TOP_P = 1.0
@@ -36,9 +36,7 @@ DEFAULT_REPEAT_PENALTY = 1.0
 OLLAMA_KEEP_ALIVE = "-5m"
 OLLAMA_THINK = False
 
-# Anchored to the whole string, and deliberately tolerant of backtick runs of
-# any length: qwen3.5:4b emits unfenced JSON with a single backtick tacked on
-# the end, which a ```-only pattern leaves in place to kill json.loads.
+# Anchored to the whole string, and tolerant of backtick runs of any length.
 _OPEN_FENCE_PATTERN = re.compile(r"\A`+[ \t]*(?:json|JSON)?[ \t]*\r?\n?")
 _CLOSE_FENCE_PATTERN = re.compile(r"\r?\n?[ \t]*`+\Z")
 
@@ -139,12 +137,9 @@ def extract_content(body: Dict[str, object], provider: str) -> str:
 def _close_unbalanced(text: str) -> Optional[str]:
     """Append the closing delimiters an unterminated JSON document is missing.
 
-    Ollama's `format` does not constrain generation, so qwen3.5:4b sometimes
-    stops (done_reason "stop", not truncation) having closed an inner array but
-    not the root object. Only ever appends closers, and returns None whenever
-    guessing could fabricate content: a string left open mid-value, a
-    mismatched delimiter, or text already balanced (whose parse failed for some
-    other reason, so repair would hide the real problem).
+    Only ever appends closers, and returns None whenever guessing could
+    fabricate content: a string left open mid-value, a mismatched delimiter, or
+    text already balanced (whose parse failed for some other reason).
     """
     stack = []
     in_string = False
@@ -240,10 +235,8 @@ class InferenceClient:
     ) -> Dict[str, object]:
         """Post and parse a JSON object.
 
-        array_property names the schema's single array field. Ollama's `format`
-        is advisory in practice (0.31.1 + qwen3.5:4b returns a bare array with
-        or without it), so a caller that knows its envelope can accept the
-        array and have it wrapped. Left unset, a non-object is still an error.
+        array_property names the schema's single array field, so a bare array
+        can be accepted and wrapped. Left unset, a non-object is an error.
         """
         content = self._post(
             system_prompt=system_prompt,
