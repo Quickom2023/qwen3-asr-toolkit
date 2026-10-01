@@ -677,7 +677,8 @@ def generate_report_from_groups(
     resolved_client = client if client is not None else client_from_env("REPORT", model)
 
     points = extract_points(groups, resolved_client)
-    outline = build_outline(points, resolved_client)
+    # No opinions is an empty report, not an error.
+    outline = build_outline(points, resolved_client) if points else []
     mapped, unmapped = map_points(points, outline, resolved_client)
 
     bullets_by_key: Dict[str, List[Bullet]] = {}
