@@ -159,7 +159,7 @@ Mỗi ý kiến độc lập là một phần tử, gồm ba trường:
 
 Quy tắc:
 - Chỉ bóc điều có trong biên bản. Không thêm, không suy diễn, không đổi số liệu.
-- Bỏ lời chào hỏi, cảm ơn, thủ tục điều hành.
+- Bỏ lời chào hỏi, cảm ơn, thủ tục điều hành. Nhưng nếu người chủ trì nêu chính kiến hoặc đề nghị cụ thể thì vẫn bóc như đại biểu bình thường.
 - Một câu chứa hai đề nghị khác nhau thì tách thành hai ý kiến.
 - Nhiều câu cùng diễn giải một đề nghị thì gộp thành một ý kiến.
 - "đồng ý nhưng đề nghị..." phải giữ cả hai vế thành hai ý kiến.
