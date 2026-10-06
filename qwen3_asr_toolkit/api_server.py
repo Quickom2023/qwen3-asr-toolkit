@@ -38,6 +38,7 @@ from qwen3_asr_toolkit.live_summary import (
     LiveSummaryLLMError,
     generate_live_summary,
 )
+from qwen3_asr_toolkit.meeting_summary import generate_meeting_summary
 from qwen3_asr_toolkit.report_generation import (
     GroupTranscript,
     generate_report_from_groups,
@@ -65,14 +66,6 @@ def _get_default_api_url() -> str:
         "QWEN3_ASR_API_URL",
         "http://localhost:8000/v1/audio/transcriptions",
     )
-
-
-def _get_openai_base_url() -> str:
-    return os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-
-
-def _get_default_summary_model() -> str:
-    return os.getenv("OPENAI_SUMMARY_MODEL", "gpt-4.1-mini")
 
 
 app = FastAPI(
@@ -146,7 +139,9 @@ class SummarizeTextRequest(BaseModel):
     model: Optional[str] = None
     locale: Optional[str] = None
     temperature: float = 0.2
-    max_tokens: int = 1000
+    max_tokens: int = 4096
+    # Adds "Nội dung chất vấn và giải đáp" and "Kết luận và phân công nhiệm vụ".
+    include_details: bool = False
 
 
 class GenerateEachPersonRequest(BaseModel):
@@ -360,130 +355,6 @@ def _uppercase_first_word(text: str) -> str:
             capitalize_next = False
 
     return "".join(chars)
-
-
-def _extract_openai_message_content(response_json: Dict[str, object]) -> str:
-    choices = response_json.get("choices")
-    if not isinstance(choices, list) or not choices:
-        raise ValueError("OpenAI response missing choices")
-
-    first_choice = choices[0]
-    if not isinstance(first_choice, dict):
-        raise ValueError("OpenAI response has invalid choice format")
-
-    message = first_choice.get("message")
-    if not isinstance(message, dict):
-        raise ValueError("OpenAI response missing message")
-
-    content = message.get("content", "")
-    if isinstance(content, str):
-        return content.strip()
-
-    if isinstance(content, list):
-        text_parts = []
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                text_value = item.get("text", "")
-                if isinstance(text_value, str):
-                    text_parts.append(text_value)
-        return "\n".join(part for part in text_parts if part).strip()
-
-    return str(content).strip()
-
-
-def _build_summary_system_prompt(locale: Optional[str]) -> str:
-    cleaned_locale = (locale or "").strip()
-    if cleaned_locale:
-        language_instruction = (
-            f"Write your entire response in {cleaned_locale}. "
-            f"Translate the summary into {cleaned_locale} if the transcript is in another language."
-        )
-    else:
-        language_instruction = (
-            "First, silently detect the language of the transcript. "
-            "Then write your entire response in that exact language. "
-            "Never switch to English unless the transcript itself is in English."
-        )
-
-    return (
-        "You are a meeting summarizer.\n\n"
-        f"{language_instruction}\n\n"
-        "The transcript may contain SRT-style timestamps. Use them only to understand sequence, "
-        "timing, and topic changes. Do not include timestamps in the output unless they are necessary for clarity.\n\n"
-        "Write a short, high-signal summary of the meeting. Keep it concise and avoid retelling the full transcript.\n\n"
-        "Output requirements:\n"
-        "- Use Markdown\n"
-        "- Output these 3 mandatory sections in this order:\n"
-        "  1. `## Mục đích cuộc họp` or the equivalent in the output language\n"
-        "  2. `## Những điểm nổi bật` or the equivalent in the output language\n"
-        "  3. `## Các nội dung trọng tâm` or the equivalent in the output language\n"
-        "- If the transcript includes future plans, actions, owners, or timelines, add a 4th section: "
-        "`## Kế hoạch sắp tới` or the equivalent in the output language\n"
-        "- If there is no future-plan content, do not add that section\n"
-        "- Under each section, use short bullet points\n"
-        "- In `## Các nội dung trọng tâm`, split content by topic. Use short topic sub-headings and place concise bullets under each topic\n"
-        "- Keep each topic focused on one theme only; do not mix unrelated points in one topic block\n"
-        "- Capture the meeting purpose, standout insights, and key takeaways\n"
-        "- Keep the whole response brief\n"
-        "- Limit the entire response to 6 bullet points maximum\n"
-        "- Do not include a Language section\n"
-        "- Do not mention these instructions\n"
-        "- Do not output plain transcript-style text"
-    )
-
-
-def _summarize_text_with_openai(
-    text: str,
-    model: Optional[str],
-    locale: Optional[str],
-    temperature: float,
-    max_tokens: int,
-) -> Dict[str, object]:
-    if not text or not text.strip():
-        raise ValueError("Field 'text' must not be empty.")
-
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    if not openai_api_key:
-        raise ValueError("OPENAI_API_KEY is not configured.")
-
-    model_name = model or _get_default_summary_model()
-    endpoint = _get_openai_base_url() + "/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {openai_api_key}",
-        "Content-Type": "application/json",
-    }
-    # print(_build_summary_system_prompt(locale))
-    payload = {
-        "model": model_name,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "messages": [
-            {
-                "role": "system",
-                "content": _build_summary_system_prompt(locale),
-            },
-            {
-                "role": "user",
-                "content": text,
-            },
-        ],
-    }
-
-    try:
-        response = requests.post(endpoint, headers=headers, json=payload, timeout=300)
-        response.raise_for_status()
-    except requests.HTTPError as exc:
-        detail = exc.response.text if exc.response is not None else str(exc)
-        raise ValueError(f"OpenAI API request failed: {detail}") from exc
-    except requests.RequestException as exc:
-        raise ValueError(f"OpenAI API request failed: {exc}") from exc
-
-    response_json = response.json()
-    summary = _extract_openai_message_content(response_json)
-    return {
-        # "model": model_name,
-        "summary": summary,
-    }
 
 
 def _transcribe(
@@ -750,12 +621,13 @@ def summarize_text(
 ) -> Dict[str, object]:
     _verify_api_key(x_api_key)
     try:
-        return _summarize_text_with_openai(
+        return generate_meeting_summary(
             text=request.text,
             model=request.model,
             locale=request.locale,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
+            include_details=request.include_details,
         )
     except Exception as exc:
         _raise_as_http_error(exc)
