@@ -34,6 +34,10 @@ from qwen3_asr_toolkit.content_generation import (
     generate_each_person_from_transcript,
     generate_conclusions_from_summaries,
 )
+from qwen3_asr_toolkit.live_summary import (
+    LiveSummaryLLMError,
+    generate_live_summary,
+)
 from qwen3_asr_toolkit.report_generation import (
     GroupTranscript,
     generate_report_from_groups,
@@ -167,6 +171,12 @@ class AttributeSpeakersRequest(BaseModel):
     srt_content: str
     model: Optional[str] = None
     roster: Optional[List[str]] = None
+
+class LiveSummaryRequest(BaseModel):
+    srt_content: str
+    speaker_roles: Optional[Dict[str, str]] = None
+    agenda_title: Optional[str] = None
+    meeting_id: Optional[str] = None
 
 
 def _split_markdown_sections(markdown_text: str) -> List[Tuple[str, str]]:
@@ -854,6 +864,25 @@ def summarize_conclusion(
             # max_tokens=request.max_tokens,
             # include_prompt=request.include_prompt,
         )
+    except Exception as exc:
+        _raise_as_http_error(exc)
+
+@app.post("/summarize/live")
+def summarize_live(
+    request: LiveSummaryRequest,
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+) -> Dict[str, object]:
+    _verify_api_key(x_api_key)
+    try:
+        return generate_live_summary(
+            request.srt_content,
+            agenda_title=request.agenda_title,
+            speaker_roles=request.speaker_roles,
+            meeting_id=request.meeting_id,
+        )
+    except LiveSummaryLLMError as exc:
+        # The model failed, not the request: the conference resends these blocks.
+        raise HTTPException(status_code=502, detail=str(exc))
     except Exception as exc:
         _raise_as_http_error(exc)
 
