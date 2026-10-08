@@ -39,7 +39,6 @@ from qwen3_asr_toolkit.srt_parser import (
     _clean_time,
     build_lines,
     parse_transcript,
-    to_12_hour,
 )
 
 
@@ -240,27 +239,6 @@ def hide_source_times(summary: Dict[str, object]) -> Dict[str, object]:
         "questions": summary["questions"],
         "tables": [
             {"title": table["title"], "data": table["data"]} for table in summary["tables"]
-        ],
-    }
-
-
-def _with_12_hour(item: Dict[str, object]) -> Dict[str, object]:
-    if "source_time" not in item:
-        return item
-    return dict(item, source_time=to_12_hour(item["source_time"]))
-
-
-def to_12_hour_times(summary: Dict[str, object]) -> Dict[str, object]:
-    """Source times as the transcript writes them, "3:52:10 PM": the model
-    cites and code checks the 24-hour form, which has no AM or PM to drop."""
-    return {
-        "key_points": summary["key_points"],
-        "action_items": [_with_12_hour(item) for item in summary["action_items"]],
-        "questions": [_with_12_hour(question) for question in summary["questions"]],
-        "tables": [
-            dict(table, source_times=[to_12_hour(time) for time in table["source_times"]])
-            if "source_times" in table else table
-            for table in summary["tables"]
         ],
     }
 
@@ -477,7 +455,6 @@ def generate_live_summary(
     )
     if not SHOW_SOURCE_TIMES:
         summary = hide_source_times(summary)
-    summary = to_12_hour_times(summary)
     return {
         "summary": summary,
         "content": render_markdown(summary)

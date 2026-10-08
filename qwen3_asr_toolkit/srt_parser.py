@@ -87,13 +87,6 @@ def format_clock(seconds: float) -> str:
     return "%02d:%02d:%02d" % (hours, minutes, secs)
 
 
-def to_12_hour(clock: str) -> str:
-    """A line time, "15:49:30", as the conference writes it: "3:49:30 PM"."""
-    hours, minutes, seconds = clock.split(":")
-    hour = int(hours)
-    return "%d:%s:%s %s" % (hour % 12 or 12, minutes, seconds, "PM" if hour >= 12 else "AM")
-
-
 def parse_transcript(raw: str) -> List[Segment]:
     """Split the conference's transcript format into segments.
 
