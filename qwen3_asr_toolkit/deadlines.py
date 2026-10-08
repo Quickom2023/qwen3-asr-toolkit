@@ -26,7 +26,9 @@ DEADLINE_TOKEN_RULES = (
     "không thêm ký tự nào: DATE:DD/MM hoặc DATE:DD/MM/YYYY CHỈ khi người nói nêu rõ ngày và "
     "tháng (\"trước ngày 25 tháng 11\" -> DATE:25/11), thêm \" HH:MM\" khi người nói nêu giờ "
     "(\"trước 20 giờ ngày 20 tháng 10\" -> DATE:20/10 20:00); PERIOD:TODAY cho trong ngày, "
-    "ngay hôm nay; PERIOD:TOMORROW cho ngày mai; PERIOD:DAYS:N, PERIOD:WEEKS:N, "
+    "ngay hôm nay; PERIOD:TOMORROW cho ngày mai; hai dạng này cũng thêm \" HH:MM\" khi người "
+    "nói nêu giờ (\"trước 17 giờ ngày mai\" -> PERIOD:TOMORROW 17:00); PERIOD:DAYS:N, "
+    "PERIOD:WEEKS:N, "
     "PERIOD:MONTHS:N cho trong N ngày, tuần, tháng tới (\"trong 3 ngày\" -> PERIOD:DAYS:3, "
     "\"2 tuần nữa\" -> PERIOD:WEEKS:2); PERIOD:THIS_WEEK cho trong tuần này; PERIOD:NEXT_WEEK "
     "cho trong tuần sau; PERIOD:THIS_MONTH cho trong tháng này; PERIOD:MONTH:MM hoặc "
@@ -44,6 +46,10 @@ DEADLINE_TOKEN_RULES = (
 _DATE_PATTERN = re.compile(
     r"DATE:\s*(\d{1,2})\s*/\s*(\d{1,2})(?:\s*/\s*(\d{4}))?(?:\s+(\d{1,2}):(\d{2}))?"
 )
+# Today and tomorrow may name an hour, like a date.
+_DAY_PATTERN = re.compile(r"PERIOD:(TODAY|TOMORROW)(?:\s+(\d{1,2}):(\d{2}))?")
+# The hour on a clean token, as _clean_hour writes it.
+_HOUR_SUFFIX = re.compile(r" (\d{2}):(\d{2})$")
 _MONTH_PATTERN = re.compile(r"PERIOD:MONTH:(\d{1,2})(?:/(\d{4}))?")
 _QUARTER_PATTERN = re.compile(r"PERIOD:Q([1-4])(?:/(\d{4}))?")
 _YEAR_PATTERN = re.compile(r"PERIOD:YEAR:(\d{4})")
@@ -91,22 +97,39 @@ def _says_a_number(raw: str) -> bool:
     return any(word in _NUMBER_WORDS for word in words)
 
 
+def _clean_hour(hour: Optional[str], minute: Optional[str]) -> Optional[str]:
+    """" HH:MM", "" when no hour was given, or None for an impossible one."""
+    if hour is None:
+        return ""
+    if int(hour) > 23 or int(minute) > 59:
+        return None
+    return " %02d:%02d" % (int(hour), int(minute))
+
+
 def _clean_date(match: "re.Match[str]", raw: str) -> str:
     day, month, year, hour, minute = match.groups()
     if _real_date(int(year or _LEAP_YEAR), int(month), int(day)) is None:
         return NONE_TOKEN
-    if hour is not None and (int(hour) > 23 or int(minute) > 59):
+    at = _clean_hour(hour, minute)
+    if at is None or not _says_a_number(raw):
         return NONE_TOKEN
-    if not _says_a_number(raw):
+    return _with_year("DATE:%02d/%02d" % (int(day), int(month)), year) + at
+
+
+def _clean_day(match: "re.Match[str]", raw: str) -> str:
+    day, hour, minute = match.groups()
+    at = _clean_hour(hour, minute)
+    if at is None:
         return NONE_TOKEN
-    token = _with_year("DATE:%02d/%02d" % (int(day), int(month)), year)
-    return token + (" %02d:%02d" % (int(hour), int(minute)) if hour is not None else "")
+    # An hour raw says no number for was invented; the day still holds.
+    return "PERIOD:" + day + (at if _says_a_number(raw) else "")
 
 
 def clean_deadline_token(value: object, raw: str) -> str:
     """The token in its canonical form, or NONE when it is not one of the
     forms, names an impossible date or hour, comes with no spoken deadline,
-    raw, or is a date where raw says no number (the model inferred it)."""
+    raw, or is a date where raw says no number (the model inferred it).
+    An hour on today or tomorrow where raw says no number is dropped."""
     if not isinstance(value, str) or not raw:
         return NONE_TOKEN
     text = value.strip()
@@ -118,6 +141,9 @@ def clean_deadline_token(value: object, raw: str) -> str:
     match = _DATE_PATTERN.fullmatch(squeezed)
     if match:
         return _clean_date(match, raw)
+    match = _DAY_PATTERN.fullmatch(squeezed)
+    if match:
+        return _clean_day(match, raw)
 
     token = squeezed.replace(" ", "")
     if token in _NAMED_PERIODS:
@@ -141,14 +167,14 @@ def resolve_deadline(token: str, meeting_date: Optional[date]) -> Optional[str]:
     """The end of the last day a clean token allows, or the hour it names, in
     Vietnam time, as YYYY-MM-DDTHH:MM:SS+07:00; or None for an event, NONE,
     or a token that needs the meeting date when there is none."""
+    at = END_OF_DAY
+    match = _HOUR_SUFFIX.search(token)
+    if match:
+        token = token[:match.start()]
+        at = time(int(match.group(1)), int(match.group(2)))
     day = _last_day_allowed(token, meeting_date)
     if day is None:
         return None
-    match = _DATE_PATTERN.fullmatch(token)
-    if match and match.group(4) is not None:
-        at = time(int(match.group(4)), int(match.group(5)))
-    else:
-        at = END_OF_DAY
     return datetime.combine(day, at, MEETING_TIMEZONE).isoformat()
 
 

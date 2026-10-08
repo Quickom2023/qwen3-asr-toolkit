@@ -5,11 +5,13 @@ transcript that arrived since its last successful call. The server keeps no
 state; each response covers only its own chunk, and the conference appends it
 to what is already on screen.
 
-One LLM call per request. The model writes JSON only. Every action item and
-table must name the transcript line it came from, and every number in a table
-must appear in the transcript; code checks both and drops what fails. The
-markdown shown on screen is rendered here, so its layout never depends on the
-model.
+One LLM call per request. The model writes JSON only. Every action item,
+question and table must name the transcript line it came from, and every number
+in a table must appear in the transcript; code checks both and drops what
+fails. A question's asker is the speaker of the line it cites. The markdown
+shown on screen is rendered here, so its layout never depends on the model.
+Questions are left out of it: the conference shows each one to the units it
+asks.
 """
 
 import logging
@@ -22,6 +24,7 @@ from qwen3_asr_toolkit.action_items import (
     ACTION_ITEM_RULES,
     ACTION_ITEM_SCHEMA,
     TRANSCRIPT_FORMAT,
+    _clean_names,
     chair_labels,
     clean_action_items,
     public_action_item,
@@ -51,7 +54,7 @@ MIN_TABLE_ROWS = 2
 
 LLM_TEMPERATURE = 0.1
 # Stops a looping model; not a cap on entries, of which there is none.
-LLM_MAX_TOKENS = 4096
+LLM_MAX_TOKENS = 16384
 
 # Hidden for now; verification still uses them. Set True to return them again.
 SHOW_SOURCE_TIMES = False
@@ -144,8 +147,28 @@ def clean_summary(raw: object, meeting_date: Optional[date] = None) -> Dict[str,
     return {
         "key_points": key_points,
         "action_items": clean_action_items(source.get("action_items"), meeting_date),
+        "questions": _clean_questions(source.get("questions")),
         "tables": tables,
     }
+
+
+def _clean_questions(raw: object) -> List[Dict[str, object]]:
+    # Nobody asked, or nothing asked: no one to warn.
+    questions: List[Dict[str, object]] = []
+    for item in _as_list(raw):
+        if not isinstance(item, dict):
+            continue
+        respondent = _clean_names(item.get("respondent"))
+        content = _clean(item.get("content"))
+        if respondent and content:
+            questions.append(
+                {
+                    "respondent": respondent,
+                    "content": content,
+                    "source_time": _clean_time(item.get("source_time")),
+                }
+            )
+    return questions
 
 
 def _number_keys(text: str) -> List[Tuple[str, ...]]:
@@ -161,15 +184,24 @@ def _number_keys(text: str) -> List[Tuple[str, ...]]:
 def verify_sources(summary: Dict[str, object], lines: List[Line]) -> Dict[str, object]:
     """Drop what the transcript does not back.
 
-    An action item must cite the start time of a real line. A table must cite
+    An action item or question must cite the start time of a real line, whose
+    speaker becomes the question's asker. A table must cite
     at least one, and each of its rows may only contain numbers that occur
     somewhere in the transcript, which rules out invented and computed figures.
     """
     known_times: Set[str] = set()
     known_numbers: Set[Tuple[str, ...]] = set()
+    speakers: Dict[str, str] = {}
     for line in lines:
         known_times.add(line.time)
         known_numbers.update(_number_keys(line.text))
+        speakers.setdefault(line.time, line.speaker)
+
+    questions = [
+        dict({"asker": speakers[question["source_time"]]}, **question)
+        for question in summary["questions"]
+        if question["source_time"] in speakers
+    ]
 
     tables: List[Dict[str, object]] = []
     for table in summary["tables"]:
@@ -190,6 +222,7 @@ def verify_sources(summary: Dict[str, object], lines: List[Line]) -> Dict[str, o
     return {
         "key_points": summary["key_points"],
         "action_items": verify_action_items(summary["action_items"], lines),
+        "questions": questions,
         "tables": tables,
     }
 
@@ -202,6 +235,10 @@ def hide_source_times(summary: Dict[str, object]) -> Dict[str, object]:
     return {
         "key_points": summary["key_points"],
         "action_items": [public_action_item(item) for item in summary["action_items"]],
+        "questions": [
+            {key: value for key, value in question.items() if key != "source_time"}
+            for question in summary["questions"]
+        ],
         "tables": [
             {"title": table["title"], "data": table["data"]} for table in summary["tables"]
         ],
@@ -259,15 +296,27 @@ def render_markdown(summary: Dict[str, object]) -> str:
 
 # ----------------------------------------------------------------- prompt
 
+QUESTION_RULES = (
+    "mọi câu hỏi, chất vấn, đề nghị, kiến nghị mà người nói gửi tới một đơn vị hoặc người được "
+    "nêu tên để họ trả lời, giải trình hoặc xử lý (\"Sở Tài chính cho biết vì sao...\", "
+    "\"đề nghị Sở X giải trình...\", \"kiến nghị UBND tỉnh...\"). respondent là danh sách "
+    "đơn vị hoặc người được hỏi, đúng như người nói nêu; nếu người nói KHÔNG nêu ai thì KHÔNG "
+    "tạo mục, KHÔNG tự suy ra. content là MỘT câu nêu điều được hỏi hoặc đề nghị. source_time "
+    "chép NGUYÊN mốc HH:MM:SS của dòng chứa câu hỏi. Việc được giao hoặc được nhận là "
+    "action_items, KHÔNG phải questions. Lời mời phát biểu và thủ tục điều hành KHÔNG phải "
+    "questions."
+)
+
 SYSTEM_PROMPT = (
     "Bạn là thư ký tóm tắt trực tiếp cuộc họp. Mỗi lần bạn nhận một đoạn TRANSCRIPT khoảng "
     "2 phút vừa diễn ra.\n\n"
     + TRANSCRIPT_FORMAT + "\n\n"
     "Chỉ tóm tắt những gì có trong TRANSCRIPT này, gồm:\n"
     "- key_points: mọi ý chính của đoạn này, mỗi ý ngắn gọn, theo thứ tự xuất hiện. Đề xuất, kiến nghị, "
-    "câu hỏi và báo cáo tình hình đều thuộc key_points.\n"
+    "câu hỏi và báo cáo tình hình đều thuộc key_points, kể cả khi đã ghi vào questions.\n"
     "- action_items: " + ACTION_ITEM_RULES + " Kiến nghị và việc không chắc ghi vào "
     "key_points.\n"
+    "- questions: " + QUESTION_RULES + "\n"
     "- tables: CHỈ tạo khi có từ 2 số liệu hoặc nội dung cùng loại trở lên được nói rõ để so "
     "sánh (giữa các đơn vị, giữa các kỳ, kế hoạch và thực hiện, dự án và vướng mắc). Chép số "
     "đúng như transcript, giữ nguyên đơn vị. KHÔNG tính tổng, tỷ lệ hay chênh lệch. Mỗi dòng "
@@ -279,11 +328,24 @@ SYSTEM_PROMPT = (
 
 _STRING = {"type": "string"}
 
+# The asker is not asked for: code takes it from the cited line.
+QUESTION_SCHEMA: Dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "respondent": {"type": "array", "items": _STRING},
+        "content": _STRING,
+        "source_time": _STRING,
+    },
+    "required": ["respondent", "content", "source_time"],
+    "additionalProperties": False,
+}
+
 SUMMARY_SCHEMA: Dict[str, object] = {
     "type": "object",
     "properties": {
         "key_points": {"type": "array", "items": _STRING},
         "action_items": {"type": "array", "items": ACTION_ITEM_SCHEMA},
+        "questions": {"type": "array", "items": QUESTION_SCHEMA},
         "tables": {
             "type": "array",
             "items": {
@@ -299,7 +361,7 @@ SUMMARY_SCHEMA: Dict[str, object] = {
             },
         },
     },
-    "required": ["key_points", "action_items", "tables"],
+    "required": ["key_points", "action_items", "questions", "tables"],
     "additionalProperties": False,
 }
 
@@ -376,17 +438,20 @@ def generate_live_summary(
         )
 
     returned_action_items = len(raw["action_items"])
+    returned_questions = len(raw["questions"])
     cleaned = clean_summary(raw, meeting_day)
     summary = verify_sources(cleaned, lines)
     logger.info(
         "live summary meeting_id=%s lines=%d truncated=%s key_points=%d "
-        "action_items=%d/%d tables=%d/%d",
+        "action_items=%d/%d questions=%d/%d tables=%d/%d",
         meeting_id or "-",
         len(lines),
         truncated,
         len(summary["key_points"]),
         len(summary["action_items"]),
         returned_action_items,
+        len(summary["questions"]),
+        returned_questions,
         len(summary["tables"]),
         len(cleaned["tables"]),
     )
