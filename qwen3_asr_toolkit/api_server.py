@@ -14,6 +14,7 @@ import srt
 import uvicorn
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from pydantic import BaseModel
+from starlette.middleware.gzip import GZipMiddleware
 from silero_vad import load_silero_vad
 try:
     from dotenv import find_dotenv, load_dotenv  # type: ignore
@@ -79,6 +80,30 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+
+# Routes whose responses are gzipped for a client that sends
+# "Accept-Encoding: gzip": the live summary goes out every couple of minutes
+# to every delegate's device.
+GZIP_PATHS = frozenset({"/summarize/live"})
+# Bytes below which a response is sent as it is: compressing it gains nothing.
+GZIP_MINIMUM_SIZE = 500
+
+
+class _GZipSomePaths:
+    """GZipMiddleware for the paths in GZIP_PATHS only."""
+
+    def __init__(self, app, minimum_size: int) -> None:
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=minimum_size)
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http" and scope["path"] in GZIP_PATHS:
+            await self.gzip(scope, receive, send)
+        else:
+            await self.app(scope, receive, send)
+
+
+app.add_middleware(_GZipSomePaths, minimum_size=GZIP_MINIMUM_SIZE)
 _shared_vad_model = None
 _shared_vad_model_lock = threading.Lock()
 
@@ -176,6 +201,8 @@ class LiveSummaryRequest(BaseModel):
     speaker_roles: Optional[Dict[str, str]] = None
     agenda_title: Optional[str] = None
     meeting_id: Optional[str] = None
+    # ISO 8601 date or datetime of the meeting; deadlines are dated from it.
+    meeting_date: Optional[str] = None
 
 
 class ActionItemsRequest(BaseModel):
@@ -183,6 +210,8 @@ class ActionItemsRequest(BaseModel):
     speaker_roles: Optional[Dict[str, str]] = None
     agenda_title: Optional[str] = None
     meeting_id: Optional[str] = None
+    # ISO 8601 date or datetime of the meeting; deadlines are dated from it.
+    meeting_date: Optional[str] = None
 
 
 def _split_markdown_sections(markdown_text: str) -> List[Tuple[str, str]]:
@@ -762,6 +791,7 @@ def summarize_live(
             agenda_title=request.agenda_title,
             speaker_roles=request.speaker_roles,
             meeting_id=request.meeting_id,
+            meeting_date=request.meeting_date,
         )
     except LiveSummaryLLMError as exc:
         # The model failed, not the request: the conference resends these blocks.
@@ -782,6 +812,7 @@ def summarize_tasks(
             agenda_title=request.agenda_title,
             speaker_roles=request.speaker_roles,
             meeting_id=request.meeting_id,
+            meeting_date=request.meeting_date,
         )
     except ActionItemsLLMError as exc:
         # The model failed, not the request: the same request can be sent again.

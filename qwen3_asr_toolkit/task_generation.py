@@ -18,6 +18,7 @@ import logging
 import re
 import time
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
+from datetime import date
 from typing import Callable, Dict, List, Optional, Tuple, TypeVar
 
 from qwen3_asr_toolkit.action_items import (
@@ -29,6 +30,7 @@ from qwen3_asr_toolkit.action_items import (
     public_action_item,
     verify_action_items,
 )
+from qwen3_asr_toolkit.deadlines import parse_meeting_date
 from qwen3_asr_toolkit.llm_inference import InferenceClient, InvalidJSONError, client_from_env
 from qwen3_asr_toolkit.srt_parser import Line, _clean, build_lines, parse_transcript
 
@@ -143,12 +145,14 @@ EXAMPLE: Dict[str, object] = {
             "name": ["Sở Giáo dục và Đào tạo", "Sở Xây dựng"],
             "task": "Rà soát nhu cầu phòng học",
             "deadline": "trước ngày 30 tháng 11",
+            "deadline_token": "DATE:30/11",
             "source_time": "14:05:10",
         },
         {
             "name": ["Sở Du lịch"],
             "task": "Chuẩn bị phương án đón khách",
             "deadline": "",
+            "deadline_token": "NONE",
             "source_time": "14:05:10",
         },
     ]
@@ -223,6 +227,7 @@ def read_chunk(
     *,
     agenda: str,
     chairs: List[str],
+    meeting_date: Optional[date] = None,
 ) -> Optional[List[Dict[str, object]]]:
     """The chunk's action items that cite one of its own lines, or None when
     its replies were not JSON."""
@@ -230,7 +235,9 @@ def read_chunk(
                   "chunk %s" % lines[start].time)
     if reply is None:
         return None
-    return verify_action_items(clean_action_items(reply.get("action_items")), lines[start:end])
+    return verify_action_items(
+        clean_action_items(reply.get("action_items"), meeting_date), lines[start:end]
+    )
 
 
 # ----------------------------------------------------------- orchestrator
@@ -271,10 +278,12 @@ def find_action_items(
     agenda_title: Optional[str] = None,
     speaker_roles: Optional[Dict[str, str]] = None,
     meeting_id: Optional[str] = None,
+    meeting_date: Optional[str] = None,
     client: Optional[InferenceClient] = None,
 ) -> List[Dict[str, object]]:
     """Every verified action item of the meeting, with its source_time, in
-    transcript order."""
+    transcript order. Deadlines are dated from meeting_date (ISO 8601)."""
+    meeting_day = parse_meeting_date(meeting_date)
     lines = split_long_lines(build_lines(parse_transcript(srt_content), speaker_roles))
     if not lines:
         raise ValueError("Field 'srt_content' contains no spoken text.")
@@ -288,7 +297,7 @@ def find_action_items(
         results = _map(
             pool,
             lambda chunk: read_chunk(resolved_client, lines, chunk[0], chunk[1],
-                                     agenda=agenda, chairs=chairs),
+                                     agenda=agenda, chairs=chairs, meeting_date=meeting_day),
             chunks,
         )
     if all(found is None for found in results):
@@ -314,6 +323,7 @@ def generate_action_items(
     agenda_title: Optional[str] = None,
     speaker_roles: Optional[Dict[str, str]] = None,
     meeting_id: Optional[str] = None,
+    meeting_date: Optional[str] = None,
     client: Optional[InferenceClient] = None,
 ) -> Dict[str, object]:
     items = find_action_items(
@@ -321,6 +331,7 @@ def generate_action_items(
         agenda_title=agenda_title,
         speaker_roles=speaker_roles,
         meeting_id=meeting_id,
+        meeting_date=meeting_date,
         client=client,
     )
     return {"action_items": [public_action_item(item) for item in items]}

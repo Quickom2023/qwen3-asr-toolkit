@@ -15,6 +15,7 @@ model.
 import logging
 import os
 import re
+from datetime import date
 from typing import Dict, List, Optional, Set, Tuple
 
 from qwen3_asr_toolkit.action_items import (
@@ -26,6 +27,7 @@ from qwen3_asr_toolkit.action_items import (
     public_action_item,
     verify_action_items,
 )
+from qwen3_asr_toolkit.deadlines import parse_meeting_date
 from qwen3_asr_toolkit.llm_inference import InferenceClient, client_from_env
 from qwen3_asr_toolkit.srt_parser import (
     Line,
@@ -117,7 +119,7 @@ def _clean_table(item: object) -> Optional[Dict[str, object]]:
     }
 
 
-def clean_summary(raw: object) -> Dict[str, object]:
+def clean_summary(raw: object, meeting_date: Optional[date] = None) -> Dict[str, object]:
     """Coerce a model reply into the Summary shape.
 
     Malformed entries are dropped rather than rejected: a partial summary on
@@ -141,7 +143,7 @@ def clean_summary(raw: object) -> Dict[str, object]:
 
     return {
         "key_points": key_points,
-        "action_items": clean_action_items(source.get("action_items")),
+        "action_items": clean_action_items(source.get("action_items"), meeting_date),
         "tables": tables,
     }
 
@@ -209,8 +211,8 @@ def hide_source_times(summary: Dict[str, object]) -> Dict[str, object]:
 def _render_action_item(item: Dict[str, object]) -> str:
     task = item["task"]
     text = "- %s: %s" % (", ".join(item["name"]), task[:1].upper() + task[1:])
-    if item["deadline"]:
-        text += " (Thời hạn: %s)" % item["deadline"]
+    if item["deadline_raw"]:
+        text += " (Thời hạn: %s)" % item["deadline_raw"]
     if "source_time" in item:
         text += " _(%s)_" % item["source_time"]
     return text
@@ -337,8 +339,10 @@ def generate_live_summary(
     agenda_title: Optional[str] = None,
     speaker_roles: Optional[Dict[str, str]] = None,
     meeting_id: Optional[str] = None,
+    meeting_date: Optional[str] = None,
     client: Optional[InferenceClient] = None,
 ) -> Dict[str, object]:
+    meeting_day = parse_meeting_date(meeting_date)
     lines = build_lines(parse_transcript(srt_content), speaker_roles)
     if not lines:
         raise ValueError("Field 'srt_content' contains no spoken text.")
@@ -372,7 +376,7 @@ def generate_live_summary(
         )
 
     returned_action_items = len(raw["action_items"])
-    cleaned = clean_summary(raw)
+    cleaned = clean_summary(raw, meeting_day)
     summary = verify_sources(cleaned, lines)
     logger.info(
         "live summary meeting_id=%s lines=%d truncated=%s key_points=%d "
