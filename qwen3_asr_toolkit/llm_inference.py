@@ -167,11 +167,56 @@ def _close_unbalanced(text: str) -> Optional[str]:
     return text + "".join("}" if char == "{" else "]" for char in reversed(stack))
 
 
+class ContextOverflowError(ValueError):
+    """The exchange did not fit: the reply hit max_tokens, or the prompt left
+    the reply too little of the context window.
+
+    A ValueError like every other client failure, so existing handlers still
+    catch it. Callers that can retry with a shorter prompt catch it first.
+    """
+
+
+class InvalidJSONError(ValueError):
+    """complete_json_strict got a reply that is not a JSON object. Asking again
+    may help, unlike a failed request or a cut-off reply.
+
+    A ValueError like every other client failure, so existing handlers still
+    catch it.
+    """
+
+
+def check_fit(body: Dict[str, object], provider: str, num_ctx: int, max_tokens: int) -> None:
+    """Raise ContextOverflowError when the server says the exchange overflowed."""
+    if provider == "ollama":
+        if body.get("done_reason") == "length":
+            raise ContextOverflowError(
+                "LLM reply was cut off at the %d-token limit." % max_tokens
+            )
+        # Ollama truncates an oversized prompt from the front instead of
+        # failing, and the front is the system prompt. A prompt that leaves
+        # less than max_tokens of room was cut, or will be while the reply is
+        # written. Cached prefix tokens are not counted, so this errs towards
+        # passing a prompt, never towards failing one that fit.
+        prompt_tokens = body.get("prompt_eval_count")
+        if isinstance(prompt_tokens, int) and prompt_tokens > num_ctx - max_tokens:
+            raise ContextOverflowError(
+                "LLM prompt used %d of %d context tokens, leaving less than %d for the reply."
+                % (prompt_tokens, num_ctx, max_tokens)
+            )
+        return
+    choices = body.get("choices")
+    first = choices[0] if isinstance(choices, list) and choices else None
+    if isinstance(first, dict) and first.get("finish_reason") == "length":
+        raise ContextOverflowError(
+            "LLM reply was cut off at the %d-token limit." % max_tokens
+        )
+
+
 class InferenceClient:
     def __init__(self, config: InferenceConfig) -> None:
         self.config = config
 
-    def _post(
+    def _request(
         self,
         *,
         system_prompt: str,
@@ -179,7 +224,7 @@ class InferenceClient:
         schema: Optional[Dict[str, object]],
         max_tokens: int,
         temperature: float,
-    ) -> str:
+    ) -> Dict[str, object]:
         payload = build_payload(
             self.config,
             system_prompt=system_prompt,
@@ -205,7 +250,25 @@ class InferenceClient:
         except requests.RequestException as exc:
             raise ValueError("LLM API request failed: " + str(exc)) from exc
 
-        return extract_content(response.json(), self.config.provider)
+        return response.json()
+
+    def _post(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        schema: Optional[Dict[str, object]],
+        max_tokens: int,
+        temperature: float,
+    ) -> str:
+        body = self._request(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            schema=schema,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        return extract_content(body, self.config.provider)
 
     def complete_text(
         self,
@@ -259,6 +322,39 @@ class InferenceClient:
             if array_property and isinstance(parsed, list):
                 return {array_property: parsed}
             raise ValueError("LLM returned JSON that is not an object: " + content[:200])
+        return parsed
+
+    def complete_json_strict(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        schema: Dict[str, object],
+        max_tokens: int = 2048,
+        temperature: float = 0.0,
+    ) -> Dict[str, object]:
+        """Like complete_json, but an exchange that overflowed is an error.
+
+        Raises ContextOverflowError when the server reports a cut-off reply or
+        a prompt that filled the context window. Never repairs unbalanced
+        JSON: here a reply that needs closing was cut off, and closing it would
+        silently drop whatever it had not written yet.
+        """
+        body = self._request(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            schema=schema,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        check_fit(body, self.config.provider, self.config.num_ctx, max_tokens)
+        content = extract_content(body, self.config.provider)
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise InvalidJSONError("LLM returned invalid JSON: " + content[:200]) from exc
+        if not isinstance(parsed, dict):
+            raise InvalidJSONError("LLM returned JSON that is not an object: " + content[:200])
         return parsed
 
 

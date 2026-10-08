@@ -48,6 +48,10 @@ from qwen3_asr_toolkit.speaker_attribution import (
     attribute_speakers_as_srt,
     client_from_env,
 )
+from qwen3_asr_toolkit.task_generation import (
+    ActionItemsLLMError,
+    generate_action_items,
+)
 
 
 DEFAULT_CONTEXT = "Transcribe with punctuation. Preserve sentence meaning across pauses."
@@ -168,6 +172,13 @@ class AttributeSpeakersRequest(BaseModel):
     roster: Optional[List[str]] = None
 
 class LiveSummaryRequest(BaseModel):
+    srt_content: str
+    speaker_roles: Optional[Dict[str, str]] = None
+    agenda_title: Optional[str] = None
+    meeting_id: Optional[str] = None
+
+
+class ActionItemsRequest(BaseModel):
     srt_content: str
     speaker_roles: Optional[Dict[str, str]] = None
     agenda_title: Optional[str] = None
@@ -754,6 +765,26 @@ def summarize_live(
         )
     except LiveSummaryLLMError as exc:
         # The model failed, not the request: the conference resends these blocks.
+        raise HTTPException(status_code=502, detail=str(exc))
+    except Exception as exc:
+        _raise_as_http_error(exc)
+
+
+@app.post("/summarize/tasks")
+def summarize_tasks(
+    request: ActionItemsRequest,
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+) -> Dict[str, object]:
+    _verify_api_key(x_api_key)
+    try:
+        return generate_action_items(
+            request.srt_content,
+            agenda_title=request.agenda_title,
+            speaker_roles=request.speaker_roles,
+            meeting_id=request.meeting_id,
+        )
+    except ActionItemsLLMError as exc:
+        # The model failed, not the request: the same request can be sent again.
         raise HTTPException(status_code=502, detail=str(exc))
     except Exception as exc:
         _raise_as_http_error(exc)
