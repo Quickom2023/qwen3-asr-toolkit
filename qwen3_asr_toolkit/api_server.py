@@ -179,7 +179,7 @@ class LiveSummaryRequest(BaseModel):
 
 
 class ActionItemsRequest(BaseModel):
-    srt_content: str
+    transcript: str
     speaker_roles: Optional[Dict[str, str]] = None
     agenda_title: Optional[str] = None
     meeting_id: Optional[str] = None
@@ -778,7 +778,7 @@ def summarize_tasks(
     _verify_api_key(x_api_key)
     try:
         return generate_action_items(
-            request.srt_content,
+            request.transcript,
             agenda_title=request.agenda_title,
             speaker_roles=request.speaker_roles,
             meeting_id=request.meeting_id,
