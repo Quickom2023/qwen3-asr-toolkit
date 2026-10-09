@@ -18,12 +18,12 @@ import unicodedata
 from datetime import date
 from typing import Dict, List, Optional
 
-from qwen3_asr_toolkit.deadlines import (
+from qwen3_asr_toolkit.utils.deadlines import (
     DEADLINE_TOKEN_RULES,
     clean_deadline_token,
     resolve_deadline,
 )
-from qwen3_asr_toolkit.srt_parser import Line, _as_list, _clean, _clean_time, _name_key
+from qwen3_asr_toolkit.utils.srt_parser import Line, _as_list, _clean, _clean_time, _name_key
 
 
 # How speaker_roles marks the chair, after casefolding.

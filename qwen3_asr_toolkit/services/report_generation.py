@@ -13,8 +13,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from qwen3_asr_toolkit.llm_inference import InferenceClient, client_from_env
-from qwen3_asr_toolkit.qwen3asr import QwenASR
+from qwen3_asr_toolkit.utils.llm_inference import InferenceClient, client_from_env
+from qwen3_asr_toolkit.utils.qwen3asr import QwenASR
 
 
 logger = logging.getLogger(__name__)

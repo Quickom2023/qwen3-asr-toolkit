@@ -20,7 +20,7 @@ import re
 from datetime import date
 from typing import Dict, List, Optional, Set, Tuple
 
-from qwen3_asr_toolkit.action_items import (
+from qwen3_asr_toolkit.utils.action_items import (
     ACTION_ITEM_RULES,
     ACTION_ITEM_SCHEMA,
     TRANSCRIPT_FORMAT,
@@ -30,9 +30,9 @@ from qwen3_asr_toolkit.action_items import (
     public_action_item,
     verify_action_items,
 )
-from qwen3_asr_toolkit.deadlines import parse_meeting_date
-from qwen3_asr_toolkit.llm_inference import InferenceClient, client_from_env
-from qwen3_asr_toolkit.srt_parser import (
+from qwen3_asr_toolkit.utils.deadlines import parse_meeting_date
+from qwen3_asr_toolkit.utils.llm_inference import InferenceClient, client_from_env
+from qwen3_asr_toolkit.utils.srt_parser import (
     Line,
     _as_list,
     _clean,

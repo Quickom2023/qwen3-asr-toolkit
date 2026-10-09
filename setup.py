@@ -22,7 +22,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'qwen3-asr=qwen3_asr_toolkit.call_api:main',
+            'qwen3-asr=qwen3_asr_toolkit.utils.call_api:main',
             'qwen3-asr-api=qwen3_asr_toolkit.api_server:run'
         ]
     },

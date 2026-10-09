@@ -21,7 +21,7 @@ from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from datetime import date
 from typing import Callable, Dict, List, Optional, Tuple, TypeVar
 
-from qwen3_asr_toolkit.action_items import (
+from qwen3_asr_toolkit.utils.action_items import (
     ACTION_ITEM_RULES,
     ACTION_ITEM_SCHEMA,
     TRANSCRIPT_FORMAT,
@@ -30,9 +30,9 @@ from qwen3_asr_toolkit.action_items import (
     public_action_item,
     verify_action_items,
 )
-from qwen3_asr_toolkit.deadlines import parse_meeting_date
-from qwen3_asr_toolkit.llm_inference import InferenceClient, InvalidJSONError, client_from_env
-from qwen3_asr_toolkit.srt_parser import Line, _clean, build_lines, parse_transcript
+from qwen3_asr_toolkit.utils.deadlines import parse_meeting_date
+from qwen3_asr_toolkit.utils.llm_inference import InferenceClient, InvalidJSONError, client_from_env
+from qwen3_asr_toolkit.utils.srt_parser import Line, _clean, build_lines, parse_transcript
 
 
 logger = logging.getLogger(__name__)

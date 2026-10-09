@@ -5,7 +5,7 @@ import srt
 from tqdm import tqdm
 from datetime import timedelta
 from urllib.parse import urlparse
-from qwen3_asr_toolkit.audio_tools import WAV_SAMPLE_RATE
+from qwen3_asr_toolkit.utils.audio_tools import WAV_SAMPLE_RATE
 from qwen3_asr_toolkit.pipeline import run_transcription_pipeline
 
 

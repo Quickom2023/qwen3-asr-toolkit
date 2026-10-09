@@ -22,35 +22,35 @@ except Exception:
     find_dotenv = None
     load_dotenv = None
 
-from qwen3_asr_toolkit.audio_tools import (
+from qwen3_asr_toolkit.utils.audio_tools import (
     WAV_SAMPLE_RATE,
     has_speech,
     load_audio,
     process_vad,
     save_audio_file,
 )
-from qwen3_asr_toolkit.content_generation import (
+from qwen3_asr_toolkit.services.content_generation import (
     build_each_person_prompt,
     build_minutes_conclusion_prompt,
     generate_each_person_from_transcript,
     generate_conclusions_from_summaries,
 )
-from qwen3_asr_toolkit.live_summary import (
+from qwen3_asr_toolkit.services.live_summary import (
     LiveSummaryLLMError,
     generate_live_summary,
 )
-from qwen3_asr_toolkit.meeting_summary import generate_meeting_summary
-from qwen3_asr_toolkit.report_generation import (
+from qwen3_asr_toolkit.services.meeting_summary import generate_meeting_summary
+from qwen3_asr_toolkit.services.report_generation import (
     GroupTranscript,
     generate_report_from_groups,
 )
-from qwen3_asr_toolkit.qwen3asr import QwenASR
-from qwen3_asr_toolkit.speaker_attribution import (
+from qwen3_asr_toolkit.utils.qwen3asr import QwenASR
+from qwen3_asr_toolkit.services.speaker_attribution import (
     attribute_speakers_as_srt,
     client_from_env,
 )
-from qwen3_asr_toolkit.spoken_numbers import fix_lisped_five
-from qwen3_asr_toolkit.task_generation import (
+from qwen3_asr_toolkit.utils.spoken_numbers import fix_lisped_five
+from qwen3_asr_toolkit.services.task_generation import (
     ActionItemsLLMError,
     generate_action_items,
 )
