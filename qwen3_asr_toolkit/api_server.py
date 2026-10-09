@@ -49,6 +49,7 @@ from qwen3_asr_toolkit.speaker_attribution import (
     attribute_speakers_as_srt,
     client_from_env,
 )
+from qwen3_asr_toolkit.spoken_numbers import fix_lisped_five
 from qwen3_asr_toolkit.task_generation import (
     ActionItemsLLMError,
     generate_action_items,
@@ -662,7 +663,7 @@ def summarize_text(
     _verify_api_key(x_api_key)
     try:
         return generate_meeting_summary(
-            text=request.text,
+            text=fix_lisped_five(request.text),
             model=request.model,
             locale=request.locale,
             temperature=request.temperature,
@@ -688,7 +689,7 @@ async def summarize_minutes(
         raise HTTPException(status_code=400, detail="Missing file in request body field 'file'.")
 
     try:
-        markdown_text = (await file.read()).decode("utf-8-sig")
+        markdown_text = fix_lisped_five((await file.read()).decode("utf-8-sig"))
         sections = _split_markdown_sections(markdown_text)
         if not sections:
             raise ValueError("Markdown file must contain at least one heading with transcript content below it.")
@@ -742,7 +743,7 @@ async def summarize_report(
         raise HTTPException(status_code=400, detail="Missing file in request body field 'file'.")
 
     try:
-        markdown_text = (await file.read()).decode("utf-8-sig")
+        markdown_text = fix_lisped_five((await file.read()).decode("utf-8-sig"))
         sections = _split_markdown_sections(markdown_text)
         if not sections:
             raise ValueError(
@@ -769,7 +770,7 @@ def summarize_conclusion(
     _verify_api_key(x_api_key)
     try:
         return generate_conclusions_from_summaries(
-            transcript=request.transcript,
+            transcript=fix_lisped_five(request.transcript),
             # model=request.model,
             # locale=request.locale,
             # temperature=request.temperature,
@@ -787,7 +788,7 @@ def summarize_live(
     _verify_api_key(x_api_key)
     try:
         return generate_live_summary(
-            request.srt_content,
+            fix_lisped_five(request.srt_content),
             agenda_title=request.agenda_title,
             speaker_roles=request.speaker_roles,
             meeting_id=request.meeting_id,
@@ -808,7 +809,7 @@ def summarize_tasks(
     _verify_api_key(x_api_key)
     try:
         return generate_action_items(
-            request.transcript,
+            fix_lisped_five(request.transcript),
             agenda_title=request.agenda_title,
             speaker_roles=request.speaker_roles,
             meeting_id=request.meeting_id,
