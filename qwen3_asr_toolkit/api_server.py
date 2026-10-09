@@ -1,4 +1,5 @@
-﻿import concurrent.futures
+﻿import asyncio
+import concurrent.futures
 import os
 import re
 import shutil
@@ -6,14 +7,17 @@ import tempfile
 import threading
 from collections import Counter
 from datetime import timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Annotated, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import requests
 import srt
 import uvicorn
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
-from pydantic import BaseModel
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, StringConstraints
 from starlette.middleware.gzip import GZipMiddleware
 from silero_vad import load_silero_vad
 try:
@@ -54,6 +58,17 @@ from qwen3_asr_toolkit.services.task_generation import (
     ActionItemsLLMError,
     generate_action_items,
 )
+from qwen3_asr_toolkit.services.speaker_identification import (
+    DEFAULT_TOP_K,
+    MAX_TOP_K,
+    MAX_UPLOAD_MB,
+    VoiceprintError,
+    VoiceprintService,
+    db_path,
+    model_path,
+)
+from qwen3_asr_toolkit.services.voiceprint_store import VoiceprintStore
+from qwen3_asr_toolkit.utils.speaker_embedding import MODEL_VERSION, Embedder
 
 
 DEFAULT_CONTEXT = "Transcribe with punctuation. Preserve sentence meaning across pauses."
@@ -108,6 +123,16 @@ app.add_middleware(_GZipSomePaths, minimum_size=GZIP_MINIMUM_SIZE)
 _shared_vad_model = None
 _shared_vad_model_lock = threading.Lock()
 
+VOICEPRINT_WORKERS = 2
+# Voiceprint requests are CPU-bound (decode, VAD, embedding): they run here, off the event loop.
+_VOICEPRINT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=VOICEPRINT_WORKERS,
+    thread_name_prefix="voiceprint",
+)
+_voiceprint_service: Optional[VoiceprintService] = None
+_voiceprint_service_lock = threading.Lock()
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
 
 def _verify_api_key(x_api_key: Optional[str]) -> None:
     expected_api_key = os.getenv("QWEN3_ASR_API_KEY")
@@ -126,6 +151,98 @@ def _get_shared_vad_model():
             if _shared_vad_model is None:
                 _shared_vad_model = load_silero_vad(onnx=True)
     return _shared_vad_model
+
+
+def _get_voiceprint_service() -> VoiceprintService:
+    global _voiceprint_service
+    if _voiceprint_service is None:
+        with _voiceprint_service_lock:
+            if _voiceprint_service is None:
+                # Its own VAD instance: the shared one is used by transcription without a lock.
+                _voiceprint_service = VoiceprintService(
+                    embedder=Embedder(model_path()),
+                    vad_model=load_silero_vad(onnx=True),
+                    store=VoiceprintStore(db_path(), MODEL_VERSION),
+                )
+    return _voiceprint_service
+
+
+def _is_voiceprint_path(path: str) -> bool:
+    return path == "/voiceprints" or path.startswith("/voiceprints/")
+
+
+def _verify_voiceprint_api_key(x_api_key: Optional[str]) -> None:
+    try:
+        _verify_api_key(x_api_key)
+    except HTTPException as exc:
+        raise VoiceprintError(401, "unauthorized", str(exc.detail))
+
+
+def _voiceprint_error_response(exc: VoiceprintError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status,
+        content={"error": exc.code, "detail": exc.detail, "speech_seconds": exc.speech_seconds},
+    )
+
+
+@app.exception_handler(VoiceprintError)
+async def _handle_voiceprint_error(request: Request, exc: VoiceprintError) -> JSONResponse:
+    return _voiceprint_error_response(exc)
+
+
+@app.exception_handler(RequestValidationError)
+async def _handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    if not _is_voiceprint_path(request.url.path):
+        return await request_validation_exception_handler(request, exc)
+    # Validation runs before the route, so the key is checked here too: 401 comes before 400.
+    try:
+        _verify_voiceprint_api_key(request.headers.get("X-Api-Key"))
+    except VoiceprintError as auth_error:
+        return _voiceprint_error_response(auth_error)
+    detail = "; ".join(
+        "%s: %s" % (".".join(str(part) for part in error["loc"][1:]) or "body", error["msg"])
+        for error in exc.errors()
+    )
+    return _voiceprint_error_response(VoiceprintError(400, "bad_request", detail))
+
+
+def _with_uploaded_audio(audio: UploadFile, action: Callable[[VoiceprintService, str], Dict[str, object]]) -> Dict[str, object]:
+    """Copies the upload to a temp file in chunks (413 past MAX_UPLOAD_MB), then runs `action` on it."""
+    max_bytes = MAX_UPLOAD_MB * 1024 * 1024
+    suffix = os.path.splitext(os.path.basename(audio.filename or ""))[1][:16]
+    fd, upload_path = tempfile.mkstemp(prefix="voiceprint_", suffix=suffix)
+    try:
+        size = 0
+        with os.fdopen(fd, "wb") as handle:
+            while True:
+                chunk = audio.file.read(_UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_bytes:
+                    raise VoiceprintError(413, "too_large", f"Audio file is larger than {MAX_UPLOAD_MB} MB.")
+                handle.write(chunk)
+        return action(_get_voiceprint_service(), upload_path)
+    finally:
+        audio.file.close()
+        try:
+            os.remove(upload_path)
+        except OSError:
+            pass
+
+
+async def _run_voiceprint_request(
+    audio: UploadFile,
+    action: Callable[[VoiceprintService, str], Dict[str, object]],
+) -> Dict[str, object]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_VOICEPRINT_EXECUTOR, _with_uploaded_audio, audio, action)
+
+
+async def _run_voiceprint_call(action: Callable[[VoiceprintService], Dict[str, object]]) -> Dict[str, object]:
+    """Runs `action` on the voiceprint executor: SQLite calls stay off the event loop too."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_VOICEPRINT_EXECUTOR, lambda: action(_get_voiceprint_service()))
 
 
 def _try_cleanup_cache_root(tmp_dir: str) -> None:
@@ -838,6 +955,52 @@ def attribute_speakers_srt(
         )
     except Exception as exc:
         _raise_as_http_error(exc)
+
+
+@app.post("/voiceprints")
+async def enroll_voiceprint(
+    user_id: str = Form(..., min_length=1, max_length=128),
+    file: UploadFile = File(...),
+    overwrite: bool = Form(False),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+) -> JSONResponse:
+    _verify_voiceprint_api_key(x_api_key)
+    result = await _run_voiceprint_request(
+        file, lambda service, audio_path: service.enroll(user_id, audio_path, overwrite=overwrite)
+    )
+    return JSONResponse(status_code=200 if result["replaced"] else 201, content=result)
+
+
+@app.post("/voiceprints/search")
+async def search_voiceprints(
+    file: UploadFile = File(...),
+    # One form field per id: -F user_ids=u_1 -F user_ids=u_2. Only these users are ranked.
+    user_ids: List[Annotated[str, StringConstraints(min_length=1, max_length=128)]] = Form(...),
+    top_k: int = Form(DEFAULT_TOP_K, ge=1, le=MAX_TOP_K),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+) -> Dict[str, object]:
+    _verify_voiceprint_api_key(x_api_key)
+    return await _run_voiceprint_request(
+        file, lambda service, audio_path: service.search(audio_path, top_k, user_ids)
+    )
+
+
+@app.get("/voiceprints")
+async def list_voiceprints(
+    limit: Optional[int] = Query(None, ge=1),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+) -> Dict[str, object]:
+    _verify_voiceprint_api_key(x_api_key)
+    return await _run_voiceprint_call(lambda service: service.list(limit))
+
+
+@app.delete("/voiceprints/{voiceprint_id}")
+async def delete_voiceprint(
+    voiceprint_id: int,
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+) -> Dict[str, object]:
+    _verify_voiceprint_api_key(x_api_key)
+    return await _run_voiceprint_call(lambda service: service.delete(voiceprint_id))
 
 
 # @app.post("/transcribe-cmd")

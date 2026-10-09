@@ -5,6 +5,7 @@ import tempfile
 import numpy as np
 import soundfile as sf
 import traceback
+from typing import Optional
 
 from silero_vad import get_speech_timestamps
 
@@ -27,11 +28,12 @@ def _validate_librosa_audio(wav_data: np.ndarray) -> None:
     if np.isnan(wav_data).any() or np.isinf(wav_data).any():
         raise ValueError("librosa returned NaN/Inf values.")
 
-def load_audio(file_path: str) -> np.ndarray:
+def load_audio(file_path: str, max_seconds: Optional[float] = None) -> np.ndarray:
+    """Decodes to 16 kHz mono float32; with max_seconds, stops decoding after that much audio."""
     recovered_path = None
     try:
         _debug_log(f"Using librosa to load audio from local file")
-        wav_data, _ = librosa.load(file_path, sr=WAV_SAMPLE_RATE, mono=True)
+        wav_data, _ = librosa.load(file_path, sr=WAV_SAMPLE_RATE, mono=True, duration=max_seconds)
         _validate_librosa_audio(wav_data)
         return wav_data
     except Exception as librosa_e:
@@ -48,8 +50,10 @@ def load_audio(file_path: str) -> np.ndarray:
                 "-acodec", "pcm_s16le",
                 "-ar", str(WAV_SAMPLE_RATE),
                 "-ac", "1",
-                recovered_path,
             ]
+            if max_seconds is not None:
+                command += ["-t", str(max_seconds)]
+            command.append(recovered_path)
             process = subprocess.run(
                 command,
                 stdout=subprocess.PIPE,
