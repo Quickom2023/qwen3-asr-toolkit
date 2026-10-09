@@ -5,6 +5,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 from collections import Counter
 from datetime import timedelta
 from typing import Annotated, Callable, Dict, List, Optional, Tuple
@@ -132,6 +133,8 @@ _VOICEPRINT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
 _voiceprint_service: Optional[VoiceprintService] = None
 _voiceprint_service_lock = threading.Lock()
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
+# A file_url download holds one of the VOICEPRINT_WORKERS threads: it must finish within this.
+DOWNLOAD_TIMEOUT_SEC = 30.0
 
 
 def _verify_api_key(x_api_key: Optional[str]) -> None:
@@ -206,37 +209,94 @@ async def _handle_validation_error(request: Request, exc: RequestValidationError
     return _voiceprint_error_response(VoiceprintError(400, "bad_request", detail))
 
 
-def _with_uploaded_audio(audio: UploadFile, action: Callable[[VoiceprintService, str], Dict[str, object]]) -> Dict[str, object]:
-    """Copies the upload to a temp file in chunks (413 past MAX_UPLOAD_MB), then runs `action` on it."""
+def _too_large() -> VoiceprintError:
+    return VoiceprintError(413, "too_large", f"Audio file is larger than {MAX_UPLOAD_MB} MB.")
+
+
+def _check_audio_source(file: Optional[UploadFile], file_url: Optional[str]) -> None:
+    """Exactly one of `file` and `file_url`, and the URL must be http(s)."""
+    if file is None and file_url is None:
+        raise VoiceprintError(400, "bad_request", "Send the audio as file or file_url.")
+    if file is not None and file_url is not None:
+        raise VoiceprintError(400, "bad_request", "Send only one of file and file_url.")
+    if file_url is not None:
+        parsed = urlparse(file_url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise VoiceprintError(400, "bad_request", "file_url must be an http:// or https:// URL.")
+
+
+def _copy_upload(audio: UploadFile, handle) -> None:
+    size = 0
+    while True:
+        chunk = audio.file.read(_UPLOAD_CHUNK_BYTES)
+        if not chunk:
+            return
+        size += len(chunk)
+        if size > MAX_UPLOAD_MB * 1024 * 1024:
+            raise _too_large()
+        handle.write(chunk)
+
+
+def _download(file_url: str, handle) -> None:
+    """Streams `file_url` into `handle`: 413 past MAX_UPLOAD_MB, 400 download_failed otherwise."""
     max_bytes = MAX_UPLOAD_MB * 1024 * 1024
-    suffix = os.path.splitext(os.path.basename(audio.filename or ""))[1][:16]
-    fd, upload_path = tempfile.mkstemp(prefix="voiceprint_", suffix=suffix)
+    deadline = time.monotonic() + DOWNLOAD_TIMEOUT_SEC
     try:
-        size = 0
-        with os.fdopen(fd, "wb") as handle:
-            while True:
-                chunk = audio.file.read(_UPLOAD_CHUNK_BYTES)
-                if not chunk:
-                    break
+        with requests.get(file_url, stream=True, timeout=(5, DOWNLOAD_TIMEOUT_SEC)) as response:
+            if response.status_code >= 400:
+                raise VoiceprintError(
+                    400, "download_failed", f"file_url answered HTTP {response.status_code}."
+                )
+            length = response.headers.get("Content-Length", "")
+            if length.isdigit() and int(length) > max_bytes:
+                raise _too_large()
+            size = 0
+            for chunk in response.iter_content(_UPLOAD_CHUNK_BYTES // 16):
                 size += len(chunk)
                 if size > max_bytes:
-                    raise VoiceprintError(413, "too_large", f"Audio file is larger than {MAX_UPLOAD_MB} MB.")
+                    raise _too_large()
+                if time.monotonic() > deadline:
+                    raise VoiceprintError(
+                        400, "download_failed", f"file_url took longer than {DOWNLOAD_TIMEOUT_SEC:g} s."
+                    )
                 handle.write(chunk)
-        return action(_get_voiceprint_service(), upload_path)
+    except requests.RequestException as exc:
+        raise VoiceprintError(400, "download_failed", f"file_url could not be downloaded: {exc}")
+
+
+def _with_audio(
+    file: Optional[UploadFile],
+    file_url: Optional[str],
+    action: Callable[[VoiceprintService, str], Dict[str, object]],
+) -> Dict[str, object]:
+    """Copies the upload, or downloads file_url, to a temp file, then runs `action` on it."""
+    name = file.filename if file is not None else urlparse(file_url).path
+    suffix = os.path.splitext(os.path.basename(name or ""))[1][:16]
+    fd, audio_path = tempfile.mkstemp(prefix="voiceprint_", suffix=suffix)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            if file is not None:
+                _copy_upload(file, handle)
+            else:
+                _download(file_url, handle)
+        return action(_get_voiceprint_service(), audio_path)
     finally:
-        audio.file.close()
+        if file is not None:
+            file.file.close()
         try:
-            os.remove(upload_path)
+            os.remove(audio_path)
         except OSError:
             pass
 
 
 async def _run_voiceprint_request(
-    audio: UploadFile,
+    file: Optional[UploadFile],
+    file_url: Optional[str],
     action: Callable[[VoiceprintService, str], Dict[str, object]],
 ) -> Dict[str, object]:
+    _check_audio_source(file, file_url)
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_VOICEPRINT_EXECUTOR, _with_uploaded_audio, audio, action)
+    return await loop.run_in_executor(_VOICEPRINT_EXECUTOR, _with_audio, file, file_url, action)
 
 
 async def _run_voiceprint_call(action: Callable[[VoiceprintService], Dict[str, object]]) -> Dict[str, object]:
@@ -960,20 +1020,24 @@ def attribute_speakers_srt(
 @app.post("/voiceprints")
 async def enroll_voiceprint(
     user_id: str = Form(..., min_length=1, max_length=128),
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    file_url: Optional[str] = Form(None, max_length=2048),
     overwrite: bool = Form(False),
     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
 ) -> JSONResponse:
     _verify_voiceprint_api_key(x_api_key)
     result = await _run_voiceprint_request(
-        file, lambda service, audio_path: service.enroll(user_id, audio_path, overwrite=overwrite)
+        file,
+        file_url,
+        lambda service, audio_path: service.enroll(user_id, audio_path, overwrite=overwrite),
     )
     return JSONResponse(status_code=200 if result["replaced"] else 201, content=result)
 
 
 @app.post("/voiceprints/search")
 async def search_voiceprints(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    file_url: Optional[str] = Form(None, max_length=2048),
     # One form field per id: -F user_ids=u_1 -F user_ids=u_2. Only these users are ranked.
     user_ids: List[Annotated[str, StringConstraints(min_length=1, max_length=128)]] = Form(...),
     top_k: int = Form(DEFAULT_TOP_K, ge=1, le=MAX_TOP_K),
@@ -981,7 +1045,7 @@ async def search_voiceprints(
 ) -> Dict[str, object]:
     _verify_voiceprint_api_key(x_api_key)
     return await _run_voiceprint_request(
-        file, lambda service, audio_path: service.search(audio_path, top_k, user_ids)
+        file, file_url, lambda service, audio_path: service.search(audio_path, top_k, user_ids)
     )
 
 
