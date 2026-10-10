@@ -341,10 +341,15 @@ class TranscribeRequest(BaseModel):
     include_text: bool = False
 
 
-class VoiceprintRoomUsersRequest(BaseModel):
-    user_ids: List[Annotated[str, StringConstraints(min_length=1, max_length=128)]] = Field(
+class VoiceprintRoomUsersEntry(BaseModel):
+    room_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
+    user_ids: List[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]] = Field(
         ..., min_length=1, max_length=1000
     )
+
+
+class VoiceprintRoomUsersRequest(BaseModel):
+    rooms: List[VoiceprintRoomUsersEntry] = Field(..., min_length=1, max_length=100)
 
 
 class SummarizeTextRequest(BaseModel):
@@ -1060,18 +1065,16 @@ async def search_voiceprints(
     )
 
 
-@app.post("/voiceprints/rooms/{room_id}/users")
+@app.post("/voiceprints/rooms/users")
 async def add_voiceprint_room_users(
-    room_id: str,
     request_data: VoiceprintRoomUsersRequest = Body(...),
     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
 ) -> Dict[str, object]:
     _verify_voiceprint_api_key(x_api_key)
-    if not room_id.strip() or len(room_id) > 128:
-        raise VoiceprintError(400, "bad_request", "room_id must be between 1 and 128 characters.")
-
     return await _run_voiceprint_call(
-        lambda service: service.add_room_members(room_id, request_data.user_ids)
+        lambda service: service.add_room_members(
+            [(room.room_id, room.user_ids) for room in request_data.rooms]
+        )
     )
 
 

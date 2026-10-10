@@ -31,7 +31,6 @@ import secrets
 import sqlite3
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from pathlib import Path
 from dotenv import dotenv_values, find_dotenv
@@ -53,9 +52,21 @@ dotenv_path = find_dotenv(usecwd=True)
 dotenv_env = dotenv_values(dotenv_path) if dotenv_path else {}
 api_key = env.get("QWEN3_ASR_API_KEY") or dotenv_env.get("QWEN3_ASR_API_KEY")
 db_path = env.get("VP_DB_PATH") or "/home/ubuntu/qwen3-asr-toolkit/qwen3_asr_toolkit/db/voiceprints.db"
-room_id = f"__deployment_smoke_test__{int(time.time())}_{secrets.token_hex(4)}"
-user_ids = [f"__deployment_smoke_user_{i}_{secrets.token_hex(3)}" for i in (1, 2)]
-url = f"http://127.0.0.1:8001/voiceprints/rooms/{urllib.parse.quote(room_id, safe='')}/users"
+room_ids = [
+    f"__deployment_smoke_test_{i}__{int(time.time())}_{secrets.token_hex(4)}"
+    for i in (1, 2)
+]
+rooms = [
+    {
+        "room_id": room_ids[0],
+        "user_ids": [f"__deployment_smoke_user_{i}_{secrets.token_hex(3)}" for i in (1, 2)],
+    },
+    {
+        "room_id": room_ids[1],
+        "user_ids": [f"__deployment_smoke_user_3_{secrets.token_hex(3)}"],
+    },
+]
+url = "http://127.0.0.1:8001/voiceprints/rooms/users"
 headers = {"Content-Type": "application/json"}
 if api_key:
     headers["X-Api-Key"] = api_key
@@ -64,7 +75,7 @@ if api_key:
 def post_members():
     request = urllib.request.Request(
         url,
-        data=json.dumps({"user_ids": user_ids}).encode(),
+        data=json.dumps({"rooms": rooms}).encode(),
         headers=headers,
         method="POST",
     )
@@ -78,11 +89,11 @@ def post_members():
 
 try:
     first_status, first = post_members()
-    if first_status != 200 or first.get("user_ids") != user_ids or first.get("added_count") != 2:
+    if first_status != 200 or first.get("rooms") != rooms or first.get("added_count") != 3:
         raise RuntimeError(f"Unexpected batch-add response: {first}")
 
     second_status, second = post_members()
-    if second_status != 200 or second.get("user_ids") != user_ids or second.get("added_count") != 0:
+    if second_status != 200 or second.get("rooms") != rooms or second.get("added_count") != 0:
         raise RuntimeError(f"Unexpected idempotency response: {second}")
 
     print("Voiceprint JSON batch-add and idempotency checks passed.")
@@ -94,8 +105,8 @@ finally:
         ).fetchone()
         if table_exists:
             connection.execute(
-                "DELETE FROM voiceprint_room_member WHERE room_id = ?",
-                (room_id,),
+                "DELETE FROM voiceprint_room_member WHERE room_id IN (?, ?)",
+                room_ids,
             )
 PY
 REMOTE

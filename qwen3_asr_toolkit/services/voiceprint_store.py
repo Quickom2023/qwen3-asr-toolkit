@@ -117,17 +117,33 @@ class VoiceprintStore:
             ).fetchone()
         return {"room_id": room_id, "user_id": user_id, "created_at": created_at}
 
-    def add_room_members(self, room_id: str, user_ids: Sequence[str]) -> Dict[str, object]:
-        """Adds multiple users to a room atomically; existing memberships are ignored."""
-        member_ids = list(dict.fromkeys(user_ids))
+    def add_room_members(
+        self, rooms: Sequence[Tuple[str, Sequence[str]]]
+    ) -> Dict[str, object]:
+        """Adds each room's users atomically; existing memberships are ignored."""
+        room_members: Dict[str, List[str]] = {}
+        for room_id, user_ids in rooms:
+            member_ids = room_members.setdefault(room_id, [])
+            known_ids = set(member_ids)
+            for user_id in user_ids:
+                if user_id not in known_ids:
+                    member_ids.append(user_id)
+                    known_ids.add(user_id)
+
         with self._lock, self._conn:
             cursor = self._conn.executemany(
                 "INSERT OR IGNORE INTO voiceprint_room_member (room_id, user_id) VALUES (?, ?)",
-                ((room_id, user_id) for user_id in member_ids),
+                (
+                    (room_id, user_id)
+                    for room_id, member_ids in room_members.items()
+                    for user_id in member_ids
+                ),
             )
         return {
-            "room_id": room_id,
-            "user_ids": member_ids,
+            "rooms": [
+                {"room_id": room_id, "user_ids": member_ids}
+                for room_id, member_ids in room_members.items()
+            ],
             "added_count": max(cursor.rowcount, 0),
         }
 

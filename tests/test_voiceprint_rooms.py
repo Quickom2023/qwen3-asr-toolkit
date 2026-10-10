@@ -29,15 +29,29 @@ class VoiceprintRoomTests(unittest.TestCase):
         self.assertEqual(["user-a"], self.store.room_user_ids("room-a"))
 
     def test_add_room_members_deduplicates_and_is_idempotent(self):
-        first = self.store.add_room_members("room-a", ["user-a", "user-b", "user-a"])
-        repeated = self.store.add_room_members("room-a", ["user-a", "user-b"])
+        rooms = [
+            ("room-a", ["user-a", "user-b", "user-a"]),
+            ("room-b", ["user-b"]),
+            ("room-a", ["user-c"]),
+        ]
+        first = self.store.add_room_members(rooms)
+        repeated = self.store.add_room_members(
+            [("room-a", ["user-a", "user-b", "user-c"]), ("room-b", ["user-b"])]
+        )
 
         self.assertEqual(
-            {"room_id": "room-a", "user_ids": ["user-a", "user-b"], "added_count": 2},
+            {
+                "rooms": [
+                    {"room_id": "room-a", "user_ids": ["user-a", "user-b", "user-c"]},
+                    {"room_id": "room-b", "user_ids": ["user-b"]},
+                ],
+                "added_count": 4,
+            },
             first,
         )
         self.assertEqual(0, repeated["added_count"])
-        self.assertEqual(["user-a", "user-b"], self.store.room_user_ids("room-a"))
+        self.assertEqual(["user-a", "user-b", "user-c"], self.store.room_user_ids("room-a"))
+        self.assertEqual(["user-b"], self.store.room_user_ids("room-b"))
 
     def test_search_can_filter_by_room_members(self):
         user_a = np.zeros(256, dtype=np.float32)
