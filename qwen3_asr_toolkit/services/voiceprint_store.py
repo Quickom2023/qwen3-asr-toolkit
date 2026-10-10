@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS voiceprint (
   speech_seconds REAL NOT NULL,
   created_at     TEXT DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (user_id, model_version)
+);
+CREATE TABLE IF NOT EXISTS voiceprint_room_member (
+  room_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (room_id, user_id)
 )
 """
 
@@ -67,7 +73,7 @@ class VoiceprintStore:
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute(_SCHEMA)
+        self._conn.executescript(_SCHEMA)
         self._migrate()
         self._conn.commit()
         self.snapshot: Snapshot = self._load()
@@ -97,6 +103,27 @@ class VoiceprintStore:
         with self._lock:
             found = self._conn.execute(_SELECT_ID, (user_id, self.model_version)).fetchone()
         return None if found is None else int(found[0])
+
+    def add_room_member(self, room_id: str, user_id: str) -> Dict[str, object]:
+        """Adds a user to a room. Repeating the operation is safe."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO voiceprint_room_member (room_id, user_id) VALUES (?, ?)",
+                (room_id, user_id),
+            )
+            (created_at,) = self._conn.execute(
+                "SELECT created_at FROM voiceprint_room_member WHERE room_id = ? AND user_id = ?",
+                (room_id, user_id),
+            ).fetchone()
+        return {"room_id": room_id, "user_id": user_id, "created_at": created_at}
+
+    def room_user_ids(self, room_id: str) -> List[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT user_id FROM voiceprint_room_member WHERE room_id = ? ORDER BY user_id",
+                (room_id,),
+            ).fetchall()
+        return [row[0] for row in rows]
 
     def add(
         self,

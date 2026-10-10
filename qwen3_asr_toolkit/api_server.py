@@ -1038,15 +1038,32 @@ async def enroll_voiceprint(
 async def search_voiceprints(
     file: Optional[UploadFile] = File(None),
     file_url: Optional[str] = Form(None, max_length=2048),
-    # One form field per id: -F user_ids=u_1 -F user_ids=u_2. Only these users are ranked.
-    user_ids: List[Annotated[str, StringConstraints(min_length=1, max_length=128)]] = Form(...),
+    room_id: Optional[Annotated[str, StringConstraints(min_length=1, max_length=128)]] = Form(None),
+    # Legacy selector: one form field per id. Prefer room_id for reusable groups.
+    user_ids: Optional[List[Annotated[str, StringConstraints(min_length=1, max_length=128)]]] = Form(None),
     top_k: int = Form(DEFAULT_TOP_K, ge=1, le=MAX_TOP_K),
     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
 ) -> Dict[str, object]:
     _verify_voiceprint_api_key(x_api_key)
+    if room_id is not None and user_ids:
+        raise VoiceprintError(400, "bad_request", "Send room_id or user_ids, not both.")
+    if room_id is None and not user_ids:
+        raise VoiceprintError(400, "bad_request", "Send room_id or at least one user_ids field.")
     return await _run_voiceprint_request(
-        file, file_url, lambda service, audio_path: service.search(audio_path, top_k, user_ids)
+        file, file_url, lambda service, audio_path: service.search(audio_path, top_k, user_ids, room_id)
     )
+
+
+@app.post("/voiceprints/rooms/{room_id}/users")
+async def add_voiceprint_room_user(
+    room_id: str,
+    user_id: Annotated[str, Form(...), StringConstraints(min_length=1, max_length=128)],
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
+) -> Dict[str, object]:
+    _verify_voiceprint_api_key(x_api_key)
+    if not room_id.strip() or len(room_id) > 128:
+        raise VoiceprintError(400, "bad_request", "room_id must be between 1 and 128 characters.")
+    return await _run_voiceprint_call(lambda service: service.add_room_member(room_id, user_id))
 
 
 @app.get("/voiceprints")
@@ -1265,4 +1282,3 @@ def run() -> None:
 
 if __name__ == "__main__":
     run()
-

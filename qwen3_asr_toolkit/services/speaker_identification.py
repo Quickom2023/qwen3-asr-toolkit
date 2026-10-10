@@ -110,8 +110,11 @@ class VoiceprintService:
         audio_path: str,
         top_k: int = DEFAULT_TOP_K,
         user_ids: Optional[Sequence[str]] = None,
+        room_id: Optional[str] = None,
     ) -> Dict[str, object]:
-        """Ranks the enrolled users in `user_ids` (every enrolled user when None)."""
+        """Ranks users selected by room or explicit ids (all users when neither is set)."""
+        if room_id is not None:
+            user_ids = self._store.room_user_ids(room_id)
         vector, speech_seconds = self._embed_speech(audio_path, QUERY_MIN_SEC)
         return {
             "speech_seconds": speech_seconds,
@@ -120,6 +123,9 @@ class VoiceprintService:
                 for c in self._store.search(vector, top_k, user_ids)
             ],
         }
+
+    def add_room_member(self, room_id: str, user_id: str) -> Dict[str, object]:
+        return self._store.add_room_member(room_id, user_id)
 
     def list(self, limit: Optional[int] = None) -> Dict[str, object]:
         total, voiceprints = self._store.list(limit)
