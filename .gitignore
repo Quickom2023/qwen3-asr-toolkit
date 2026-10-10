@@ -179,6 +179,7 @@ cython_debug/
 /data
 *.sh
 !/deploy.sh
+!/test_voiceprint_api.sh
 test/
 
 asr-env/
