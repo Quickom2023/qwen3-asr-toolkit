@@ -127,6 +127,9 @@ class VoiceprintService:
     def add_room_member(self, room_id: str, user_id: str) -> Dict[str, object]:
         return self._store.add_room_member(room_id, user_id)
 
+    def add_room_members(self, room_id: str, user_ids: Sequence[str]) -> Dict[str, object]:
+        return self._store.add_room_members(room_id, user_ids)
+
     def list(self, limit: Optional[int] = None) -> Dict[str, object]:
         total, voiceprints = self._store.list(limit)
         return {"total": total, "voiceprints": voiceprints}

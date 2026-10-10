@@ -14,11 +14,11 @@ from urllib.parse import urlparse
 import requests
 import srt
 import uvicorn
-from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 from starlette.middleware.gzip import GZipMiddleware
 from silero_vad import load_silero_vad
 try:
@@ -339,6 +339,12 @@ class TranscribeRequest(BaseModel):
     save_srt: bool = False
     include_srt: bool = True
     include_text: bool = False
+
+
+class VoiceprintRoomUsersRequest(BaseModel):
+    user_ids: List[Annotated[str, StringConstraints(min_length=1, max_length=128)]] = Field(
+        ..., min_length=1, max_length=1000
+    )
 
 
 class SummarizeTextRequest(BaseModel):
@@ -1055,15 +1061,18 @@ async def search_voiceprints(
 
 
 @app.post("/voiceprints/rooms/{room_id}/users")
-async def add_voiceprint_room_user(
+async def add_voiceprint_room_users(
     room_id: str,
-    user_id: Annotated[str, Form(...), StringConstraints(min_length=1, max_length=128)],
+    request_data: VoiceprintRoomUsersRequest = Body(...),
     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
 ) -> Dict[str, object]:
     _verify_voiceprint_api_key(x_api_key)
     if not room_id.strip() or len(room_id) > 128:
         raise VoiceprintError(400, "bad_request", "room_id must be between 1 and 128 characters.")
-    return await _run_voiceprint_call(lambda service: service.add_room_member(room_id, user_id))
+
+    return await _run_voiceprint_call(
+        lambda service: service.add_room_members(room_id, request_data.user_ids)
+    )
 
 
 @app.get("/voiceprints")

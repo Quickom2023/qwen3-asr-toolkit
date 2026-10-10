@@ -28,6 +28,17 @@ class VoiceprintRoomTests(unittest.TestCase):
         self.store = VoiceprintStore(self.db_path, "test-model")
         self.assertEqual(["user-a"], self.store.room_user_ids("room-a"))
 
+    def test_add_room_members_deduplicates_and_is_idempotent(self):
+        first = self.store.add_room_members("room-a", ["user-a", "user-b", "user-a"])
+        repeated = self.store.add_room_members("room-a", ["user-a", "user-b"])
+
+        self.assertEqual(
+            {"room_id": "room-a", "user_ids": ["user-a", "user-b"], "added_count": 2},
+            first,
+        )
+        self.assertEqual(0, repeated["added_count"])
+        self.assertEqual(["user-a", "user-b"], self.store.room_user_ids("room-a"))
+
     def test_search_can_filter_by_room_members(self):
         user_a = np.zeros(256, dtype=np.float32)
         user_a[0] = 1.0

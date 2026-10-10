@@ -117,6 +117,20 @@ class VoiceprintStore:
             ).fetchone()
         return {"room_id": room_id, "user_id": user_id, "created_at": created_at}
 
+    def add_room_members(self, room_id: str, user_ids: Sequence[str]) -> Dict[str, object]:
+        """Adds multiple users to a room atomically; existing memberships are ignored."""
+        member_ids = list(dict.fromkeys(user_ids))
+        with self._lock, self._conn:
+            cursor = self._conn.executemany(
+                "INSERT OR IGNORE INTO voiceprint_room_member (room_id, user_id) VALUES (?, ?)",
+                ((room_id, user_id) for user_id in member_ids),
+            )
+        return {
+            "room_id": room_id,
+            "user_ids": member_ids,
+            "added_count": max(cursor.rowcount, 0),
+        }
+
     def room_user_ids(self, room_id: str) -> List[str]:
         with self._lock:
             rows = self._conn.execute(
