@@ -178,6 +178,7 @@ cython_debug/
 /test
 /data
 *.sh
+!/deploy.sh
 test/
 
 asr-env/

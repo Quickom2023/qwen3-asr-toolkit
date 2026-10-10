@@ -29,3 +29,13 @@ curl -X POST "http://localhost:8001/voiceprints/search" \
 ```
 
 `/voiceprints/search` still accepts repeated `user_ids` form fields for existing clients. Send either `room_id` or `user_ids`.
+
+## Deploying to the ASR server
+
+Deploy the latest `prod` commit to `s2t.quickom.net` and restart the API service:
+
+```sh
+DEPLOY_SSH_AUTH_SOCK="$SSH_AUTH_SOCK" ./deploy.sh
+```
+
+The script preserves untracked server data, stops if tracked server files have local edits, and leaves the vLLM process running.
